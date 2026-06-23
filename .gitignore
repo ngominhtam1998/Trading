@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+
+# State databases (contains trading state, not code)
+live/state_*.db
+live/state_*.db-wal
+live/state_*.db-shm
+
+# Logs
+live/bot_*.log
+*.log
+
+# Cache files
+*.pkl
+*.cache
+
+# API keys (NEVER commit)
+.env
+.env.local
+*.key
+*.pem
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Data files (large CSV, fetched on-demand)
+data/*.csv
+
+# Backtest reports (generated, not source)
+reports/*.csv
+
+# Top symbol lists (generated)
+all_usdt_perpetuals.json
+*.json
+
+# IDE
+.vscode/
+.idea/
+.cursor/
+.codeium/

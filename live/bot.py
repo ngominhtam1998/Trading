@@ -1,0 +1,477 @@
+"""Live trading bot for Binance USDT-M Futures.
+
+Trading logic is UNCHANGED (reused from strategy_aggressive.decide_v15).
+This file is the execution + safety layer:
+
+  * Real STOP_MARKET / TAKE_PROFIT_MARKET orders on the exchange protect every
+    position even if the bot process dies (closePosition=true reduce-only).
+  * SQLite state persists position metadata for crash recovery.
+  * On startup, reconcile() makes exchange + DB consistent:
+      - resume managing known positions (replace missing SL/TP)
+      - ADOPT orphan positions (place emergency SL) [user choice]
+      - record positions that closed while the bot was down
+      - cancel dangling orders with no position
+  * Every operation is wrapped so a transient failure never kills the loop.
+
+Run:  python -m live.bot      (from D:/Temp/Trading)
+Mode is chosen via BOT_MODE env var (testnet|dry|live), default testnet.
+"""
+import time
+import logging
+import signal
+from datetime import datetime, timezone
+
+from . import config
+from .binance_client import BinanceClient, BinanceError
+from .state_db import StateDB
+from .exchange_filters import ExchangeFilters
+from . import strategy_adapter as sa
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    handlers=[logging.FileHandler(config.LOG_PATH, encoding="utf-8"),
+              logging.StreamHandler()],
+)
+log = logging.getLogger("bot")
+
+RUNNING = True
+
+
+def _stop(signum, frame):
+    global RUNNING
+    log.info(f"Signal {signum} received -> graceful shutdown after current cycle")
+    RUNNING = False
+
+
+signal.signal(signal.SIGINT, _stop)
+signal.signal(signal.SIGTERM, _stop)
+
+
+class Bot:
+    def __init__(self):
+        log.info(f"=== Starting bot in MODE={config.MODE} ===")
+        self.client = BinanceClient()
+        self.db = StateDB(config.STATE_DB_PATH)
+        self.filters = ExchangeFilters(self.client)
+        self.btc_regime = "neutral"
+        self.last_decision_bar = None
+
+    # ---------------- helpers ----------------
+    def _cid(self, symbol, kind):
+        """Deterministic-ish clientOrderId with our prefix for recognition."""
+        ms = int(time.time() * 1000) % 100000000
+        return f"{config.ORDER_PREFIX}_{symbol}_{kind}_{ms}"[:36]
+
+    def _is_our_order(self, order):
+        cid = order.get("clientOrderId", "")
+        return cid.startswith(config.ORDER_PREFIX)
+
+    def get_equity(self):
+        """Account equity (wallet + unrealized PnL) for position sizing."""
+        try:
+            equity, avail = self.client.equity_usdt()
+            return equity, avail
+        except BinanceError as e:
+            log.error(f"get_equity failed: {e}")
+            return None, None
+
+    # ---------------- protective orders ----------------
+    def place_protection(self, symbol, direction, sl_price, tp_price):
+        """Place SL (STOP_MARKET) + TP (TAKE_PROFIT_MARKET), closePosition=true.
+        Returns (sl_cid, tp_cid). Raises if SL cannot be placed (critical)."""
+        close_side = "SELL" if direction == "LONG" else "BUY"
+        sl_price = self.filters.round_price(symbol, sl_price)
+        tp_price = self.filters.round_price(symbol, tp_price)
+
+        sl_cid = self._cid(symbol, "sl")
+        self.client.new_stop_market(symbol, close_side, sl_price,
+                                    client_id=sl_cid, close_position=True)
+        tp_cid = None
+        try:
+            tp_cid = self._cid(symbol, "tp")
+            self.client.new_take_profit_market(symbol, close_side, tp_price,
+                                              client_id=tp_cid, close_position=True)
+        except BinanceError as e:
+            log.warning(f"{symbol} TP placement failed (SL is set, continuing): {e}")
+            tp_cid = None
+        return sl_cid, tp_cid
+
+    def cancel_protection(self, symbol):
+        """Cancel all of OUR open orders for a symbol."""
+        try:
+            orders = self.client.open_orders(symbol)
+            for o in orders:
+                if self._is_our_order(o):
+                    self.client.cancel_order(symbol, order_id=o["orderId"])
+        except BinanceError as e:
+            log.warning(f"cancel_protection {symbol}: {e}")
+
+    def has_open_order_type(self, symbol, otype):
+        try:
+            orders = self.client.open_orders(symbol)
+            return any(o["type"] == otype for o in orders)
+        except BinanceError:
+            return False
+
+    # ---------------- reconciliation (CRASH RECOVERY) ----------------
+    def reconcile(self):
+        log.info("--- Reconciliation start ---")
+        try:
+            ex_positions = {p["symbol"]: p for p in self.client.position_risk()}
+        except BinanceError as e:
+            log.critical(f"Cannot fetch positions for reconciliation: {e}. Aborting startup.")
+            raise
+        db_positions = {p["symbol"]: p for p in self.db.all_positions()}
+        log.info(f"Exchange positions: {list(ex_positions)} | DB positions: {list(db_positions)}")
+
+        # 1) positions in DB but NOT on exchange -> closed while bot was down
+        for symbol in list(db_positions):
+            if symbol not in ex_positions:
+                dbp = db_positions[symbol]
+                log.warning(f"{symbol}: in DB but no exchange position -> closed while down")
+                self.cancel_protection(symbol)
+                self.db.record_closed(symbol, dbp["direction"], dbp["entry_price"], 0,
+                                      dbp["qty"], 0.0, "closed_while_down", dbp["entry_time"])
+                self.db.delete_position(symbol)
+                self.db.log_event("recover_closed", symbol, "position gone, cleaned up")
+
+        # 2) positions on exchange
+        for symbol, exp in ex_positions.items():
+            if symbol in db_positions:
+                # known position -> ensure SL/TP exist; replace if missing
+                dbp = db_positions[symbol]
+                self._ensure_protection(symbol, dbp, exp)
+            else:
+                # ORPHAN -> adopt per user choice
+                self._adopt_orphan(symbol, exp)
+
+        # 3) dangling orders for symbols with no position
+        try:
+            all_orders = self.client.open_orders()
+            sym_no_pos = set(o["symbol"] for o in all_orders) - set(ex_positions)
+            for symbol in sym_no_pos:
+                log.warning(f"{symbol}: open orders but no position -> cancelling dangling")
+                self.cancel_protection(symbol)
+        except BinanceError as e:
+            log.warning(f"dangling-order scan failed: {e}")
+
+        log.info("--- Reconciliation done ---")
+
+    def _ensure_protection(self, symbol, dbp, exp):
+        """Make sure a known position still has SL/TP on the exchange."""
+        try:
+            orders = self.client.open_orders(symbol)
+        except BinanceError as e:
+            log.warning(f"{symbol}: cannot list orders during recovery: {e}")
+            orders = []
+        has_sl = any(o["type"] == "STOP_MARKET" for o in orders)
+        has_tp = any(o["type"] == "TAKE_PROFIT_MARKET" for o in orders)
+        if has_sl and has_tp:
+            log.info(f"{symbol}: protection intact, resuming management")
+            return
+        log.warning(f"{symbol}: missing protection (sl={has_sl} tp={has_tp}) -> replacing")
+        # cancel whatever is left, re-place both from DB-stored prices
+        self.cancel_protection(symbol)
+        try:
+            sl_cid, tp_cid = self.place_protection(symbol, dbp["direction"],
+                                                   dbp["sl_price"], dbp["tp_price"])
+            self.db.update_position_fields(symbol, sl_client_id=sl_cid, tp_client_id=tp_cid)
+            self.db.log_event("recover_protection", symbol, "re-placed SL/TP")
+        except BinanceError as e:
+            log.critical(f"{symbol}: FAILED to restore protection: {e}")
+
+    def _adopt_orphan(self, symbol, exp):
+        """Adopt an orphan position: place emergency SL, register in DB."""
+        log.warning(f"{symbol}: ORPHAN position (amt={exp['amt']}), adopting")
+        direction = exp["dir"]
+        entry = exp["entry"] or exp["mark"]
+        qty = abs(exp["amt"])
+        lev = exp.get("leverage") or config.MAX_LEVERAGE
+        # emergency SL at configured pct; keep direction-aware
+        if direction == "LONG":
+            sl_price = entry * (1 - config.ORPHAN_SL_PCT / 100)
+            tp_price = entry * (1 + config.ORPHAN_SL_PCT * 3.5 / 100)
+        else:
+            sl_price = entry * (1 + config.ORPHAN_SL_PCT / 100)
+            tp_price = entry * (1 - config.ORPHAN_SL_PCT * 3.5 / 100)
+        self.cancel_protection(symbol)  # clear any unknown orders first
+        try:
+            sl_cid, tp_cid = self.place_protection(symbol, direction, sl_price, tp_price)
+        except BinanceError as e:
+            log.critical(f"{symbol}: cannot protect orphan, closing it for safety: {e}")
+            self._market_close(symbol, direction, qty, "orphan_unprotectable")
+            return
+        self.db.upsert_position({
+            "symbol": symbol, "direction": direction, "entry_price": entry,
+            "qty": qty, "leverage": lev, "orig_sl_pct": config.ORPHAN_SL_PCT,
+            "sl_price": sl_price, "tp_price": tp_price, "be_moved": 0, "trail_moved": 0,
+            "entry_time": int(time.time() * 1000), "score": 0, "margin": 0,
+            "sl_client_id": sl_cid, "tp_client_id": tp_cid, "entry_client_id": None,
+            "adopted": 1,
+        })
+        self.db.log_event("adopt_orphan", symbol, {"entry": entry, "sl": sl_price})
+
+    def _market_close(self, symbol, direction, qty, reason):
+        close_side = "SELL" if direction == "LONG" else "BUY"
+        qty = self.filters.round_qty(symbol, qty)
+        try:
+            self.cancel_protection(symbol)
+            self.client.new_market_order(symbol, close_side, qty,
+                                         client_id=self._cid(symbol, "close"), reduce_only=True)
+            self.db.log_event("market_close", symbol, reason)
+        except BinanceError as e:
+            log.error(f"{symbol}: market close failed ({reason}): {e}")
+
+    # ---------------- daily halt ----------------
+    def check_daily_halt(self, equity):
+        """Returns True if new entries are halted due to daily loss limit."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        state = self.db.get_kv("daily", {})
+        if state.get("date") != today:
+            state = {"date": today, "start_equity": equity}
+            self.db.set_kv("daily", state)
+            return False
+        start = state.get("start_equity", equity)
+        if start > 0 and equity < start * (1 - config.DAILY_LOSS_LIMIT / 100):
+            return True
+        return False
+
+    # ---------------- entry ----------------
+    def try_enter(self, symbol, opp, equity):
+        """Open a position for `symbol` based on decision `opp`."""
+        direction = opp["dir"]
+        lev = opp["lev"]
+        margin = equity * config.POSITION_PCT / 100.0
+        try:
+            price = self.client.mark_price(symbol)
+        except BinanceError as e:
+            log.warning(f"{symbol}: no mark price, skip entry: {e}")
+            return False
+        notional = margin * lev
+        qty = self.filters.round_qty(symbol, notional / price)
+        ok, reason = self.filters.valid_order(symbol, qty, price)
+        if not ok:
+            log.info(f"{symbol}: skip entry ({reason})")
+            return False
+
+        if not config.is_real_orders():
+            log.info(f"[DRY] would ENTER {symbol} {direction} qty={qty} @~{price} lev={lev}x "
+                     f"sl={opp['sl']}% tp={opp['tp']}% score={opp['score']}")
+            return False
+
+        # configure symbol
+        self.client.set_margin_type(symbol, "ISOLATED")
+        self.client.set_leverage(symbol, lev)
+
+        side = "BUY" if direction == "LONG" else "SELL"
+        entry_cid = self._cid(symbol, "entry")
+        try:
+            resp = self.client.new_market_order(symbol, side, qty, client_id=entry_cid)
+        except BinanceError as e:
+            log.warning(f"{symbol}: entry order rejected: {e}")
+            return False
+
+        fill = float(resp.get("avgPrice") or 0) or price
+        if direction == "LONG":
+            sl_price = fill * (1 - opp["sl"] / 100)
+            tp_price = fill * (1 + opp["tp"] / 100)
+        else:
+            sl_price = fill * (1 + opp["sl"] / 100)
+            tp_price = fill * (1 - opp["tp"] / 100)
+
+        # CRITICAL: protect the freshly opened position
+        try:
+            sl_cid, tp_cid = self.place_protection(symbol, direction, sl_price, tp_price)
+        except BinanceError as e:
+            log.critical(f"{symbol}: ENTRY FILLED but SL FAILED -> closing position now: {e}")
+            self._market_close(symbol, direction, qty, "sl_place_failed")
+            return False
+
+        self.db.upsert_position({
+            "symbol": symbol, "direction": direction, "entry_price": fill,
+            "qty": qty, "leverage": lev, "orig_sl_pct": opp["sl"],
+            "sl_price": sl_price, "tp_price": tp_price, "be_moved": 0, "trail_moved": 0,
+            "entry_time": int(time.time() * 1000), "score": opp["score"], "margin": margin,
+            "sl_client_id": sl_cid, "tp_client_id": tp_cid, "entry_client_id": entry_cid,
+            "adopted": 0,
+        })
+        self.db.log_event("entry", symbol,
+                          {"dir": direction, "qty": qty, "fill": fill, "lev": lev,
+                           "sl": sl_price, "tp": tp_price, "score": opp["score"]})
+        log.info(f"ENTER {symbol} {direction} qty={qty} @ {fill} lev={lev}x "
+                 f"SL={sl_price:.6g} TP={tp_price:.6g} score={opp['score']}")
+        return True
+
+    # ---------------- manage open positions (BE / trail / max-hold) ----------------
+    def manage_positions(self, ex_positions):
+        for dbp in self.db.all_positions():
+            symbol = dbp["symbol"]
+            if symbol not in ex_positions:
+                # closed (hit SL/TP) since last cycle
+                log.info(f"{symbol}: no longer on exchange -> closed (SL/TP hit)")
+                self.cancel_protection(symbol)
+                self.db.record_closed(symbol, dbp["direction"], dbp["entry_price"], 0,
+                                      dbp["qty"], 0.0, "sl_tp_hit", dbp["entry_time"])
+                self.db.delete_position(symbol)
+                self.db.log_event("exit", symbol, "SL/TP hit")
+                continue
+            try:
+                self._update_stops(symbol, dbp)
+            except BinanceError as e:
+                log.warning(f"{symbol}: manage failed: {e}")
+
+    def _update_stops(self, symbol, dbp):
+        """Replicate backtest BE (0.5R) and trail (1.2R) logic on the live SL order."""
+        # max hold
+        age_ms = int(time.time() * 1000) - dbp["entry_time"]
+        if age_ms >= config.MAX_HOLD_BARS * config.BAR_SECONDS * 1000:
+            log.info(f"{symbol}: max hold reached -> closing")
+            self._market_close(symbol, dbp["direction"], dbp["qty"], "max_hold")
+            self.db.record_closed(symbol, dbp["direction"], dbp["entry_price"], 0,
+                                  dbp["qty"], 0.0, "max_hold", dbp["entry_time"])
+            self.db.delete_position(symbol)
+            return
+
+        # use last closed 15m bar high/low for favorable excursion (matches backtest)
+        raw = self.client.klines(symbol, config.BAR_INTERVAL, limit=3)
+        df = sa.klines_to_df(raw, drop_forming=True)
+        if df is None or len(df) == 0:
+            return
+        bar = df.iloc[-1]
+        entry = dbp["entry_price"]
+        orig_sl = dbp["orig_sl_pct"]
+        direction = dbp["direction"]
+        be_moved = bool(dbp["be_moved"])
+        trail_moved = bool(dbp["trail_moved"])
+
+        if direction == "LONG":
+            profit_pct = (bar["high"] - entry) / entry * 100
+            new_sl = None
+            if profit_pct >= 1.2 * orig_sl and not trail_moved:
+                new_sl = entry * (1 + orig_sl / 100); trail_moved = True; be_moved = True
+            elif profit_pct >= 0.5 * orig_sl and not be_moved:
+                new_sl = entry * (1 + 0.01)
+                be_moved = True
+        else:
+            profit_pct = (entry - bar["low"]) / entry * 100
+            new_sl = None
+            if profit_pct >= 1.2 * orig_sl and not trail_moved:
+                new_sl = entry * (1 - orig_sl / 100); trail_moved = True; be_moved = True
+            elif profit_pct >= 0.5 * orig_sl and not be_moved:
+                new_sl = entry * (1 - 0.01)
+                be_moved = True
+
+        if new_sl is not None:
+            new_sl = self.filters.round_price(symbol, new_sl)
+            # replace SL order
+            if dbp.get("sl_client_id"):
+                self.client.cancel_order(symbol, client_id=dbp["sl_client_id"])
+            close_side = "SELL" if direction == "LONG" else "BUY"
+            sl_cid = self._cid(symbol, "sl")
+            try:
+                self.client.new_stop_market(symbol, close_side, new_sl,
+                                            client_id=sl_cid, close_position=True)
+                self.db.update_position_fields(symbol, sl_price=new_sl, sl_client_id=sl_cid,
+                                               be_moved=int(be_moved), trail_moved=int(trail_moved))
+                kind = "trail" if trail_moved else "breakeven"
+                log.info(f"{symbol}: SL moved to {new_sl:.6g} ({kind})")
+                self.db.log_event("move_sl", symbol, {"sl": new_sl, "kind": kind})
+            except BinanceError as e:
+                log.warning(f"{symbol}: failed to move SL, re-placing original: {e}")
+                # ensure we still have protection
+                if not self.has_open_order_type(symbol, "STOP_MARKET"):
+                    self.client.new_stop_market(symbol, close_side, dbp["sl_price"],
+                                                client_id=self._cid(symbol, "sl"), close_position=True)
+
+    # ---------------- entry scan ----------------
+    def scan_entries(self, ex_positions, equity):
+        open_count = len(ex_positions)
+        max_conc = (config.MAX_CONCURRENT_NEUTRAL if self.btc_regime == "neutral"
+                    else config.MAX_CONCURRENT)
+        slots = max_conc - open_count
+        if slots <= 0:
+            log.info(f"No free slots ({open_count}/{max_conc}), regime={self.btc_regime}")
+            return
+
+        # universe = top volume USDT perps
+        try:
+            tickers = self.client.ticker_24h()
+        except BinanceError as e:
+            log.warning(f"ticker fetch failed: {e}")
+            return
+        universe = [t["symbol"] for t in sorted(
+            (t for t in tickers if t["symbol"].endswith("USDT") and self.filters.has(t["symbol"])),
+            key=lambda t: float(t.get("quoteVolume", 0)), reverse=True
+        )[:config.COINS_UNIVERSE_SIZE]]
+
+        opportunities = []
+        for symbol in universe:
+            if symbol in ex_positions:
+                continue
+            opp = sa.analyze_symbol(self.client, symbol, self.btc_regime)
+            if opp:
+                opportunities.append({"symbol": symbol, **opp})
+            if not RUNNING:
+                return
+        opportunities.sort(key=lambda x: -x["score"])
+        log.info(f"{len(opportunities)} opportunities, {slots} slots, regime={self.btc_regime}")
+
+        for opp in opportunities[:slots]:
+            if not RUNNING:
+                return
+            self.try_enter(opp["symbol"], opp, equity)
+
+    # ---------------- main loop ----------------
+    def run(self):
+        self.reconcile()
+        listen_key_ts = 0
+        while RUNNING:
+            cycle_start = time.time()
+            try:
+                self.btc_regime = sa.get_btc_regime_live(self.client)
+                ex_positions = {p["symbol"]: p for p in self.client.position_risk()}
+                equity, avail = self.get_equity()
+                if equity is None:
+                    log.warning("equity unavailable, skipping cycle")
+                    time.sleep(10); continue
+
+                # always manage existing positions first (safety)
+                self.manage_positions(ex_positions)
+
+                # entries only on decision bar + not halted
+                halted = self.check_daily_halt(equity)
+                if halted:
+                    log.info(f"DAILY HALT active (equity={equity:.2f}); managing only")
+                else:
+                    self.scan_entries(ex_positions, equity)
+
+                # listenKey keepalive every 30 min (kept for future WS use)
+                if time.time() - listen_key_ts > 1800:
+                    listen_key_ts = time.time()
+
+                log.info(f"Cycle done in {time.time()-cycle_start:.1f}s | "
+                         f"equity={equity:.2f} avail={avail:.2f} "
+                         f"open={len(ex_positions)} regime={self.btc_regime}")
+            except BinanceError as e:
+                log.error(f"Cycle BinanceError: {e}")
+            except Exception as e:
+                log.exception(f"Cycle unexpected error: {e}")
+
+            # sleep until next 15m bar close (+ small buffer)
+            self._sleep_to_next_bar()
+        log.info("Bot stopped cleanly.")
+        self.db.close()
+
+    def _sleep_to_next_bar(self):
+        now = time.time()
+        period = config.BAR_SECONDS
+        next_close = (int(now // period) + 1) * period + 5  # +5s buffer for bar finalization
+        wait = max(5, next_close - now)
+        end = now + wait
+        while RUNNING and time.time() < end:
+            time.sleep(min(2, end - time.time()))
+
+
+if __name__ == "__main__":
+    Bot().run()

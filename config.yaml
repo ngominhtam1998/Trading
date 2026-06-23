@@ -1,0 +1,53 @@
+# Scalping backtest config
+exchange:
+  name: bybit
+  base_url: https://api.bybit.com
+  testnet: false
+
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - ARBUSDT
+
+timeframes:
+  - 1
+  - 5
+  - 15
+
+# How many months of historical data to fetch (1m candles)
+fetch:
+  months: 3
+  # Limit per request (Bybit max 1000)
+  limit: 1000
+  # Sleep between requests to avoid rate limits
+  sleep_ms: 100
+
+backtest:
+  initial_capital: 10000
+  # Percentage of capital per trade
+  position_size_pct: 0.10
+  # Fee per trade (0.1% = 0.001)
+  fee_rate: 0.001
+  # Slippage per trade (0.05% = 0.0005)
+  slippage: 0.0005
+  # Max concurrent positions per symbol
+  max_positions: 1
+
+risk:
+  # Stop daily trading if daily loss reaches this fraction of capital
+  daily_loss_limit: 0.03
+  # Max drawdown before stopping
+  max_drawdown: 0.15
+  # Default stop loss (as fraction of entry price)
+  stop_loss: 0.015
+  # Default take profit (as fraction of entry price)
+  take_profit: 0.03
+
+strategies:
+  - sma_crossover
+  - bollinger_rsi
+
+output:
+  reports_dir: reports

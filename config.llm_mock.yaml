@@ -1,0 +1,41 @@
+# Mock LLM-based scalping demo
+exchange:
+  name: bybit
+  base_url: https://api.bybit.com
+  category: linear
+  testnet: false
+
+symbols:
+  - ETHUSDT
+
+timeframes:
+  - 3
+
+fetch:
+  days: 28
+  limit: 1000
+  sleep_ms: 50
+
+backtest:
+  initial_capital: 1000
+  position_size_pct: 0.10
+  fee_rate: 0.0001
+  slippage: 0.0005
+  max_positions: 1
+  leverage: 5
+
+risk:
+  daily_loss_limit: 0.50
+  max_drawdown: 0.80
+  stop_loss: 0.01
+  take_profit: 0.02
+  use_atr_sl_tp: true
+  atr_multiplier_sl: 1.5
+  atr_multiplier_tp: 3.0
+  max_hold_bars: 10
+
+strategies:
+  - llm_mock
+
+output:
+  reports_dir: reports

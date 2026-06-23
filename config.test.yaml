@@ -1,0 +1,38 @@
+# Fast test config for scalping backtest
+exchange:
+  name: bybit
+  base_url: https://api.bybit.com
+  testnet: false
+
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+
+timeframes:
+  - 5
+  - 15
+
+fetch:
+  months: 1
+  limit: 1000
+  sleep_ms: 50
+
+backtest:
+  initial_capital: 10000
+  position_size_pct: 0.10
+  fee_rate: 0.001
+  slippage: 0.0005
+  max_positions: 1
+
+risk:
+  daily_loss_limit: 0.03
+  max_drawdown: 0.15
+  stop_loss: 0.015
+  take_profit: 0.03
+
+strategies:
+  - sma_crossover
+  - bollinger_rsi
+
+output:
+  reports_dir: reports
