@@ -2,6 +2,14 @@
 
 Backtest framework + production strategies for crypto scalping on Binance Futures (USDT perpetuals).
 
+## Directory Structure
+
+```
+production/     # Strategies đã test + live bot (dùng thật)
+experimental/   # Version thử nghiệm (chưa chốt)
+legacy/         # Code cũ V2-V11 (không dùng)
+```
+
 ## Strategy Versions
 
 ### strategy_aggressive.py (V15r2) — *** PRODUCTION (main) ***
@@ -22,6 +30,28 @@ Key params vs balanced:
 - BE at 0.5R (was 0.7R) — protect capital earlier
 - Trail from 1.2R (was 1.5R) — lock profit sooner
 - EMA200 + body as SOFT score bonuses (not hard filters)
+
+### strategy_aggressive_lv2.py — HIGH RISK / HIGH REWARD
+**Even higher return, accept bigger drawdowns, 0 liquidation**
+
+- 29/31 months profitable (94%)
+- Avg return: +73.99%/month
+- Median return: +54.84%
+- Avg PF: 1.58
+- Avg MaxDD: 14.4%
+- 0 liquidations in 31 months
+- Worst month: -6.43% (Nov 2024)
+- Best month: +219.72% (Dec 2023)
+
+Key params vs aggressive:
+- RR = 4.5 (was 3.5) — much bigger winners
+- SL = 1.1x ATR (was 1.3) — tighter stop, lower hit rate
+- BE at 0.7R (was 0.5R) — let winners breathe
+- Trail from 1.5R (was 1.2R) — ride bigger trends
+- POSITION_PCT = 9.0 (was 7.0) — bigger position
+- MAX_CONCURRENT = 12 (was 10), MAX_LEVERAGE = 12 (was 10)
+- MIN_SCORE = 5 (was 6) — take lower-confidence trades
+- DECISION_EVERY = 12 bars (was 16) — scan more frequently
 
 ### strategy_balanced.py (V14) — CONSERVATIVE
 **Lower return, proven robust, 0 liquidation**

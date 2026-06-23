@@ -115,7 +115,7 @@ Params giữ nguyên V14: ADX>=20, RSI 40-65/35-60, score>=6, conc=10, pos=7%, v
 
 ### Phase 7: Live Trading Bot
 
-**File:** `live/` directory
+**File:** `production/live/` directory
 
 Build live bot trên Binance USDT-M Futures API, tái sử dụng nguyên `decide_v15` từ `strategy_aggressive.py` (KHÔNG thay đổi logic trade).
 
@@ -147,43 +147,91 @@ Build live bot trên Binance USDT-M Futures API, tái sử dụng nguyên `decid
 - `dry`: real market data, không đặt lệnh thật
 - `live`: tiền thật (chỉ sau khi testnet verified)
 
+**VPS:** Bot cần VPS chạy 24/7. Binance chỉ giữ SL/TP (tự đóng khi chạm giá), bot phải chạy để: vào lệnh mới, dời SL breakeven/trailing, đóng lệnh max-hold. Nếu VPS sập → SL/TP vẫn bảo vệ, khi VPS lên lại bot tự reconcile.
+
+### Phase 8: Aggressive LV2 — Higher risk, higher reward
+
+**File:** `production/strategy_aggressive_lv2.py`
+
+User yêu cầu version risk hơn, reward cao hơn nữa. Based on aggressive (V15r2) với các thay đổi:
+
+1. **RR = 4.5** (was 3.5) — TP xa hơn nữa, winner lớn hơn nhiều
+2. **SL = 1.1x ATR** (was 1.3) — SL chặt hơn, rủi ro mỗi trade nhỏ hơn nhưng hit rate thấp hơn
+3. **BE at 0.7R** (was 0.5R) — để winner breathe trước khi bảo vệ
+4. **Trail from 1.5R** (was 1.2R) — trail muộn hơn, ride trend lớn hơn
+5. **POSITION_PCT = 9.0** (was 7.0) — position size lớn hơn, compounding mạnh hơn
+6. **MAX_CONCURRENT = 12** (was 10) — nhiều vị thế đồng thời hơn
+7. **MAX_LEVERAGE = 12** (was 10) — leverage cao hơn
+8. **DAILY_LOSS_LIMIT = 7.0** (was 5.0) — chấp nhận daily DD lớn hơn
+9. **LIQ_SAFETY_ROE = 50.0** (was 45.0) — SL gần liquidation hơn
+10. **MIN_SCORE = 5** (was 6) — take lower-confidence trades
+11. **DECISION_EVERY = 12 bars** (was 16) — scan entry mỗi 3h thay vì 4h
+12. **Neutral regime: max 7 concurrent, 7x lev** (was 5/5)
+
+**Kết quả 31 tháng backtest:**
+
+| Metric | Balanced (V14) | Aggressive (V15r2) | Aggressive LV2 |
+|---|---|---|---|
+| Tháng có lãi | 26/31 (84%) | 31/31 (100%) | 29/31 (94%) |
+| Avg return | +24.84% | +38.90% | **+73.99%** |
+| Median return | +20.80% | +32.46% | **+54.84%** |
+| Avg PF | 1.44 | 1.89 | 1.58 |
+| Avg MaxDD | 10.3% | 6.8% | 14.4% |
+| Total LIQ | 0 | 0 | 0 |
+| Worst month | -11.45% | +2.44% | -6.43% |
+| Best month | +85.57% | +97.43% | **+219.72%** |
+| Avg trades/month | 254 | 266 | 345 |
+
+**Phân tích:**
+- Return gần gấp đôi aggressive (+74% vs +39%)
+- Compounding cực mạnh: Dec 2023 $1000→$3,197 (3.2x), Aug 2024 $1000→$2,674 (2.7x)
+- Trade-off: 2 tháng lỗ (Oct 2025 -2.26%, Nov 2024 -6.43%), MaxDD avg 14.4% (có tháng 28.3%)
+- PF thấp hơn (1.58 vs 1.89) do SL chặt + RR cao → hit rate thấp hơn
+- Trough equity hầu hết >$900, tối đa -17.3% (Nov 2024: $827)
+- **0 liquidation** — position size tự giảm khi equity giảm
+- LV2 thắng aggressive ở 20/31 tháng, thua 11
+
+**Kết luận:** LV2 phù hợp user chấp nhận drawdown 20-30% để đổi return cao. Aggressive (V15r2) vẫn là production chính (100% tháng lãi, an toàn hơn). LV2 là option high-risk/high-reward.
+
 ---
 
 ## Cấu trúc file hiện tại
 
 ```
 D:/Temp/Trading/
-├── README.md                          # Tổng quan + so sánh 2 strategies
+├── README.md                          # Tổng quan + so sánh strategies
 ├── PROJECT_HISTORY.md                 # File này — lịch sử đầy đủ
 │
-├── strategy_aggressive.py             # V15r2 — PRODUCTION (main)
-│   ├── decide_v15()                   # Signal logic (KHÔNG đổi)
-│   ├── add_indicators()               # EMA9/21/50/200, RSI, ATR, ADX
-│   ├── get_btc_regime()               # Bull/bear/neutral từ BTC daily
-│   ├── adjust_leverage_for_liq()      # Anti-liquidation
-│   └── backtest_portfolio()           # Backtest engine
+├── production/                        # ← Strategies đã test + live bot
+│   ├── strategy_aggressive.py             # V15r2 — PRODUCTION (100% tháng lãi, +39%)
+│   ├── strategy_aggressive_test.py        # Test 31 tháng
+│   ├── strategy_aggressive_6month_test.py # Test 6 tháng liên tục (3 windows)
+│   ├── strategy_aggressive_lv2.py         # LV2 — HIGH RISK (94% tháng lãi, +74%)
+│   ├── strategy_aggressive_lv2_test.py    # Test 31 tháng
+│   ├── strategy_balanced.py               # V14 — conservative (+25%)
+│   ├── strategy_balanced_test.py          # Test 31 tháng
+│   ├── strategy_balanced_6month_test.py   # Test 6 tháng liên tục
+│   └── live/                              # Live trading bot
+│       ├── README_LIVE.md                 # Hướng dẫn live bot
+│       ├── config.py                      # Mode, keys, params
+│       ├── binance_client.py              # REST client + retry/backoff
+│       ├── exchange_filters.py            # Precision, min-notional
+│       ├── state_db.py                    # SQLite state persistence
+│       ├── strategy_adapter.py            # Live klines → decide_v15
+│       ├── bot.py                         # Reconciliation + main loop
+│       └── test_recovery.py               # Offline recovery self-test
 │
-├── strategy_aggressive_test.py        # Test 31 tháng
-├── strategy_aggressive_6month_test.py # Test 6 tháng liên tục (3 windows)
+├── experimental/                     # ← Version thử nghiệm (trống, sẽ thêm sau)
 │
-├── strategy_balanced.py               # V14 — conservative (backup)
-├── strategy_balanced_test.py          # Test 31 tháng
-├── strategy_balanced_6month_test.py   # Test 6 tháng liên tục
-│
-├── live/                              # Live trading bot
-│   ├── README_LIVE.md                 # Hướng dẫn live bot
-│   ├── config.py                      # Mode, keys, params
-│   ├── binance_client.py              # REST client + retry/backoff
-│   ├── exchange_filters.py            # Precision, min-notional
-│   ├── state_db.py                    # SQLite state persistence
-│   ├── strategy_adapter.py            # Live klines → decide_v15
-│   ├── bot.py                         # Reconciliation + main loop
-│   └── test_recovery.py               # Offline recovery self-test
-│
-├── main.py                            # Legacy entry point
-├── mock_llm.py                        # Mock LLM (legacy)
-├── mock_llm_agent.py                  # Mock LLM agent (legacy)
-└── run_llm_agent.py                   # LLM agent runner (legacy)
+├── legacy/                            # ← Code cũ không dùng
+│   ├── main.py                             # Legacy entry point
+│   ├── mock_llm.py / mock_llm_agent.py     # Mock LLM
+│   ├── run_llm_agent.py                    # LLM agent runner
+│   ├── backtest/                           # Backtest framework (V2-V11)
+│   ├── strategies/                         # Strategy templates (V2-V11)
+│   ├── features/                           # Feature engineering
+│   ├── data/                               # Data fetcher (Bybit)
+│   └── config*.yaml                        # Legacy configs
 ```
 
 ---

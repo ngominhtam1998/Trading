@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from collections import Counter
 urllib3.disable_warnings()
 
-sys.path.insert(0, 'D:/Temp/Trading')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import strategy_aggressive as v15
 
 windows = [

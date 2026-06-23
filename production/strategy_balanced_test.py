@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from collections import Counter
 urllib3.disable_warnings()
 
-sys.path.insert(0, 'D:/Temp/Trading')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import strategy_balanced as v14c
 
 test_months = [(2022, 12), (2023, 1), (2024, 8), (2025, 5), (2026, 2),
