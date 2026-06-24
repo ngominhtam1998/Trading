@@ -1,65 +1,49 @@
-# Hướng dẫn setup FreeVPS.it.com cho Trading Bot (không cần credit card)
+# Hướng dẫn setup GratisVPS.net cho Trading Bot (không cần credit card)
 
 ## Tổng quan
-- FreeVPS.it.com: VPS free forever, không cần credit card (chỉ email)
-- Cấu hình: 4GB RAM, 2 vCPU, 50GB NVMe SSD
-- Đủ chạy 3 bot Python (lv4, lv5, lv6)
-- **Rủi ro:** không có SLA, có thể shutdown bất ngờ. Chỉ dùng cho testnet.
+- GratisVPS.net: VPS free forever, không cần credit card (chỉ email)
+- Cấu hình: 1GB RAM, 1 vCPU, 20GB NVMe SSD, 1TB bandwidth
+- **RAM thực tế 3 bot tốn: 247MB** (đo trên laptop, mỗi bot ~82MB)
+- → 1GB RAM **dư sức** chạy 3 bot (còn dư ~750MB)
+- **Rủi ro:** không có SLA, community support only. Chỉ dùng cho testnet.
   Khi lên live → chuyển Hetzner ($4.5/tháng, PayPal).
 
-## Bước 1: Tạo tài khoản FreeVPS.it.com
+## Bước 1: Tạo tài khoản GratisVPS.net
 
-1. Vào https://freevps.it.com
-2. Click "Get Started" hoặc "Sign Up"
-3. Điền email (chỉ cần email, KHÔNG cần credit card/PayPal)
-4. Confirm email (check inbox + spam folder)
+1. Vào https://gratisvps.net/free-vps.html
+2. Click "Get Your Free VPS Instantly" (hoặc "Claim Your Free Server Now")
+3. Đăng ký bằng email (KHÔNG cần credit card/PayPal)
+4. Confirm email (check inbox + spam)
 5. Đăng nhập vào dashboard
 
 ## Bước 2: Tạo VPS
 
-1. Trong dashboard, click "Create Server" hoặc "Deploy"
+1. Trong dashboard, chọn "Deploy" hoặc "Create Server"
 2. Cấu hình:
    - **OS:** Ubuntu 22.04 (hoặc 24.04)
-   - **Plan:** Starter (Free) — 4GB RAM, 2 vCPU, 50GB NVMe
-   - **Location:** chọn gần Binance server nhất (Singapore/Tokyo nếu có,
-     không có thì EU cũng OK — bot không cần ultra-low latency)
-   - **Hostname:** trading-bot (tùy ý)
-3. Click "Deploy" / "Create"
-4. Chờ 1-5 phút, server sẽ ở trạng thái Running
+   - **Plan:** Free — 1 vCPU, 1GB RAM, 20GB NVMe
+   - **Location:** chọn gần Binance nhất (Singapore/Tokyo nếu có,
+     EU cũng OK — bot không cần ultra-low latency, chỉ fetch klines mỗi 15m)
+3. Click "Deploy"
+4. Chờ 30-60 giây
 5. **Ghi lại:**
-   - Public IP (ví dụ: 192.168.xx.xx)
-   - Root password (hoặc SSH key nếu có option)
+   - Public IP
+   - Root password (hoặc SSH key)
 
 ## Bước 3: Kết nối SSH
 
-### Trên Windows (PowerShell)
-```powershell
-# Nếu có SSH key
-ssh -i .\your-key.key root@<IP>
-
-# Nếu dùng password
+```bash
+# Windows PowerShell
 ssh root@<IP>
 # Nhập password khi prompted
-```
 
-### Trên Mac/Linux
-```bash
+# Mac/Linux
 ssh root@<IP>
 ```
 
-### Lỗi "Connection refused"?
-- Chờ thêm 2-3 phút (server đang boot)
-- Kiểm tra IP đúng chưa
-- Trong dashboard FreeVPS, xem server status = Running
+Lỗi "Connection refused"? Chờ thêm 1-2 phút (server đang boot).
 
-### Lỗi "Permission denied"?
-```bash
-# Đảm bảo file key có đúng quyền
-chmod 400 your-key.key  # Mac/Linux
-# Windows: right-click key → Properties → Security → chỉ giữ user hiện tại Read
-```
-
-## Bước 4: Cài đặt Python + dependencies
+## Bước 4: Cài đặt Python + tools
 
 ```bash
 # Update system
@@ -68,44 +52,48 @@ apt update && apt upgrade -y
 # Cài Python 3 + tools
 apt install -y python3 python3-pip python3-venv git tmux nano curl
 
-# Kiểm tra Python version
+# Kiểm tra
 python3 --version  # cần >= 3.10
 ```
 
-## Bước 5: Clone repo + setup
+## Bước 5: Thêm swap 1GB (phòng hờ)
+
+Bot tốn 247MB RAM, dư ~750MB. Nhưng thêm swap cho an toàn:
 
 ```bash
-# Tạo thư mục
+fallocate -l 1G /swapfile
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab
+free -h  # verify swap = 1GB
+```
+
+## Bước 6: Clone repo + setup
+
+```bash
 mkdir -p /opt/trading
 cd /opt/trading
-
-# Clone repo
 git clone https://github.com/ngominhtam1998/Trading.git .
 
-# Tạo virtual environment
+# Virtual environment + packages
 python3 -m venv venv
 source venv/bin/activate
-
-# Cài packages
 pip install pandas requests
 
-# Kiểm tra
+# Verify
 python3 -c "import pandas, requests; print('OK')"
 ```
 
-## Bước 6: Tạo file .env
+## Bước 7: Tạo file .env
 
 ```bash
 cd /opt/trading/production/live
-
-# Copy template
 cp .env.example .env
-
-# Edit
 nano .env
 ```
 
-Nội dung .env (điền API keys + Telegram):
+Nội dung .env:
 ```
 BOT_MODE=testnet
 BOT_STRATEGY=v15
@@ -125,32 +113,28 @@ TELEGRAM_CHAT_LV6=@trading_v6
 
 Lưu: `Ctrl+O` → `Enter` → `Ctrl+X`
 
-## Bước 7: Test chạy 1 bot (verify hoạt động)
+## Bước 8: Test chạy 1 bot
 
 ```bash
 cd /opt/trading/production
 source venv/bin/activate
 
-# Chạy lv4 thử (Ctrl+C để stop sau khi thấy OK)
+# Chạy thử lv4 (Ctrl+C để stop sau khi thấy OK)
 BOT_MODE=testnet BOT_STRATEGY=lv4 PYTHONIOENCODING=utf-8 python3 -u -m live.bot
 ```
 
-Nếu thấy:
+Thấy log:
 ```
 === Starting bot in MODE=testnet STRATEGY=lv4 ===
 Time synced, offset=...
 Loaded filters for 528 symbols
---- Reconciliation start ---
-...
 ENTER ... SHORT ...
 Telegram delivered to @trading_v4 (...)
 ```
 
 → Bot chạy OK. `Ctrl+C` để stop.
 
-## Bước 8: Chạy 3 bot 24/7 bằng systemd
-
-Tạo service file cho mỗi bot:
+## Bước 9: Chạy 3 bot 24/7 bằng systemd
 
 ```bash
 # Bot LV4
@@ -231,7 +215,7 @@ systemctl start trading-bot-lv4 trading-bot-lv5 trading-bot-lv6
 Kiểm tra:
 
 ```bash
-# Status 3 bot
+# Status
 systemctl status trading-bot-lv4
 systemctl status trading-bot-lv5
 systemctl status trading-bot-lv6
@@ -240,66 +224,47 @@ systemctl status trading-bot-lv6
 tail -f /opt/trading/production/live/bot_testnet_lv4.log
 ```
 
-## Bước 9: Quản lý bot
+## Bước 10: Quản lý bot
 
 ```bash
-# Stop bot
+# Stop / Start / Restart
 systemctl stop trading-bot-lv4
-
-# Start bot
 systemctl start trading-bot-lv4
-
-# Restart bot
 systemctl restart trading-bot-lv4
 
-# Xem log realtime
-journalctl -u trading-bot-lv4 -f
+# Log
+journalctl -u trading-bot-lv4 -f          # realtime
+journalctl -u trading-bot-lv4 -n 100      # 100 dòng cuối
 
-# Xem log 100 dòng cuối
-journalctl -u trading-bot-lv4 -n 100
-
-# Update code từ git
+# Update code
 cd /opt/trading
 git pull origin main
 systemctl restart trading-bot-lv4 trading-bot-lv5 trading-bot-lv6
 
-# Kiểm tra RAM
+# RAM usage
 free -h
 
-# Kiểm tra bot processes
+# Bot processes
 ps aux | grep live.bot
 ```
 
-## Bước 10: Backup state (QUAN TRỌNG)
+## Bước 11: Backup state (QUAN TRỌNG)
 
-VPS free có thể mất bất ngờ. Backup state DB định kỳ:
+VPS free có thể mất bất ngờ. Backup state DB:
 
 ```bash
-# Tạo cron backup hàng giờ
-crontab -e
-```
-
-Thêm dòng:
-```
-0 * * * * tar czf /opt/trading/backup/state_$(date +\%Y\%m\%d_\%H).tar.gz /opt/trading/production/live/state_*.db 2>/dev/null
-```
-
-Hoặc backup lên GitHub (an toàn hơn):
-```bash
-# Script backup đơn giản
+# Backup lên GitHub mỗi 6 tiếng
 cat > /opt/trading/backup.sh << 'EOF'
 #!/bin/bash
 cd /opt/trading
-git add production/live/state_*.db
+git add production/live/state_*.db 2>/dev/null
 git commit -m "backup: state $(date +'%Y-%m-%d %H:%M')" 2>/dev/null
 git push origin main 2>/dev/null
 EOF
 chmod +x /opt/trading/backup.sh
 
 # Cron mỗi 6 tiếng
-crontab -e
-# Thêm:
-0 */6 * * * /opt/trading/backup.sh
+(crontab -l 2>/dev/null; echo "0 */6 * * * /opt/trading/backup.sh") | crontab -
 ```
 
 ## Khi lên LIVE
@@ -308,62 +273,49 @@ crontab -e
 
 1. Tạo Hetzner account (https://hetzner.cloud) — PayPal, không cần credit card
 2. Tạo CX22 server (~$4.5/tháng, 4GB RAM, 2 vCPU)
-3. Làm lại Bước 4-9 (nhưng đổi .env `BOT_MODE=live` + fill live keys)
-4. Hoặc: backup state từ FreeVPS → restore trên Hetzner
+3. Làm lại Bước 4-9 (đổi .env `BOT_MODE=live` + fill live keys)
+4. Hoặc: backup state từ GratisVPS → restore trên Hetzner
 
 ## Troubleshooting
 
 ### Bot crash liên tục
 ```bash
-# Xem log
 journalctl -u trading-bot-lv4 -n 50
-# Thường là: sai API key, sai .env, thiếu package
+# Thường: sai API key, sai .env, thiếu package
 ```
 
-### RAM hết (OOM)
+### RAM hết (OOM killer kill bot)
 ```bash
-# Thêm swap 4GB
-fallocate -l 4G /swapfile
-chmod 600 /swapfile
-mkswap /swapfile
-swapon /swapfile
-echo '/swapfile none swap sw 0 0' >> /etc/fstab
+# Kiểm tra swap
+free -h
+# Nếu swap = 0, tạo lại (Bước 5)
+# Nếu vẫn hết, giảm bot: chỉ chạy 1-2 bot thay vì 3
 ```
 
-### VPS bị shutdown (free tier rủi ro)
+### VPS bị shutdown
 - Binance vẫn giữ SL/TP (algo orders tự đóng khi chạm giá)
-- Khi VPS lên lại → bot tự reconcile (adopt positions, đặt lại SL nếu thiếu)
+- Khi VPS lên lại → bot tự reconcile (adopt positions, đặt lại SL)
 - Nếu VPS mất hẳn → tạo VPS mới, clone repo, restore state backup
 
 ### Không kết nối được Binance API
 ```bash
-# Test kết nối
 curl -s https://testnet.binancefuture.com/fapi/v1/time
-# Nếu timeout → VPS bị chặn IP, liên hệ FreeVPS support
-```
-
-### pandas install lỗi
-```bash
-# ARM: dùng binary wheel
-pip install --only-binary :all: pandas
-# Nếu không có wheel: build từ source (chậm 5-10 phút)
-pip install pandas
+# Timeout → VPS bị chặn IP, thử VPN hoặc đổi VPS
 ```
 
 ## Tóm tắt chi phí
-- FreeVPS.it.com: **$0/tháng** (chỉ email, không credit card)
+- GratisVPS.net: **$0/tháng** (chỉ email)
 - Python + pandas + requests: **free**
-- Git repo (GitHub): **free**
+- GitHub repo: **free**
 - Telegram Bot API: **free**
 - **Tổng: $0/tháng**
 
-## So sánh FreeVPS vs Oracle vs Hetzner
+## RAM thực tế (đo trên laptop)
+| Bot | RAM |
+|-----|-----|
+| LV4 | 82 MB |
+| LV5 | 83 MB |
+| LV6 | 82 MB |
+| **Tổng** | **247 MB** |
 
-| | FreeVPS | Oracle Cloud | Hetzner |
-|---|---|---|---|
-| Giá | $0 | $0 | ~$4.5/tháng |
-| Credit card | Không cần | Cần | PayPal OK |
-| RAM | 4GB | 24GB (ARM) | 4GB |
-| Uptime SLA | Không có | 99.9% | 99.9% |
-| Rủi ro shutdown | Cao | Thấp | Rất thấp |
-| Phù hợp | Testnet | Testnet | Live |
+GratisVPS 1GB RAM → dư ~750MB. An toàn.
