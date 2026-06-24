@@ -39,6 +39,10 @@ tail -f /opt/trading/production/live/bot_testnet_lv4.log  # log
 - **KHÔNG tự động `git push`**. Chỉ push khi user nói rõ "push" / "commit và push" / "deploy".
 - Commit local có thể tự làm, nhưng push luôn cần xác nhận user.
 
+### Rules khi làm việc
+- **Phân tích kỹ yêu cầu user** trước khi làm. Nếu không rõ, hỏi lại. Không tự đoán.
+- Với thay đổi rủi ro (live deploy, đóng positions, xóa dữ liệu), **luôn xác nhận lại** với user.
+
 ### Key fixes đã apply
 1. SL atomic swap (place new before cancel old + price validation)
 2. Telegram SSL (verify=False trên testnet, verify=True trên live)
