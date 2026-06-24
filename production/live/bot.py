@@ -477,10 +477,16 @@ class Bot:
                 direction = dbp.get("direction", "LONG")
                 is_sl = False
                 if exit_px and sl_price and tp_price:
+                    # Primary: compare exit price to SL/TP levels
                     if direction == "LONG":
                         is_sl = exit_px <= sl_price * 1.002  # within 0.2% of SL
                     else:
                         is_sl = exit_px >= sl_price * 0.998
+                elif pnl is not None:
+                    # Fallback: if exit price unavailable, use PnL sign
+                    # SL hit → loss (pnl < 0), TP hit → profit (pnl >= 0)
+                    is_sl = pnl < 0
+                    log.debug(f"{symbol}: exit_px unavailable, using PnL sign for SL/TP detection (pnl={pnl})")
                 reason = "SL hit" if is_sl else "TP hit"
                 self.db.record_closed(symbol, direction, dbp["entry_price"],
                                       exit_px or 0, dbp["qty"], pnl or 0.0,
