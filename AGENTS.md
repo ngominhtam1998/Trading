@@ -36,6 +36,8 @@ tail -f /opt/trading/production/live/bot_testnet_lv4.log  # log
 - Remote: `origin` (github.com/ngominhtam1998/Trading)
 - Branch: `main`
 - `.env`, `state_*.db`, `bot_*.log` trong `.gitignore`
+- **KHÔNG tự động `git push`**. Chỉ push khi user nói rõ "push" / "commit và push" / "deploy".
+- Commit local có thể tự làm, nhưng push luôn cần xác nhận user.
 
 ### Key fixes đã apply
 1. SL atomic swap (place new before cancel old + price validation)
