@@ -21,6 +21,8 @@ import queue
 import logging
 import threading
 import requests
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 log = logging.getLogger("telegram")
 
@@ -34,6 +36,7 @@ _QUEUE = queue.Queue(maxsize=500)   # bounded; producer never blocks
 _worker = None
 _worker_lock = threading.Lock()
 _session = requests.Session()
+_session.verify = False              # match binance_client (avoid SSL issues on some systems)
 _SEND_TIMEOUT = 8                    # seconds per HTTP call (worker thread only)
 
 
@@ -92,9 +95,11 @@ def _deliver(chat_id, text, parse_mode):
     try:
         r = _session.post(url, json=payload, timeout=_SEND_TIMEOUT)
         if r.status_code != 200:
-            log.warning(f"Telegram send failed: {r.status_code} {r.text[:150]}")
+            log.warning(f"Telegram send failed: {r.status_code} {r.text[:200]}")
+        else:
+            log.info(f"Telegram delivered to {chat_id} ({len(text)} chars)")
     except Exception as e:
-        log.debug(f"Telegram network error (ignored): {e}")
+        log.warning(f"Telegram network error: {e}")
 
 
 def is_enabled():

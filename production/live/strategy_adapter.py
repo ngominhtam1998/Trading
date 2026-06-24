@@ -83,6 +83,9 @@ def get_htf_trend(client, symbol):
 def analyze_symbol(client, symbol, btc_regime):
     """Return decision dict {dir, lev, sl, tp, score, neutral} or None.
     Mirrors backtest: signal bar = last closed 15m bar; window = 50 bars to it.
+    Also applies funding rate filter:
+      - SHORT + funding <= -0.1% → skip (shorts pay longs when funding negative)
+      - LONG  + funding >= +0.1% → skip (longs pay shorts when funding positive)
     """
     try:
         raw = client.klines(symbol, config.BAR_INTERVAL, limit=config.KLINES_LOOKBACK)
@@ -96,6 +99,19 @@ def analyze_symbol(client, symbol, btc_regime):
         wd = df.iloc[-50:]                # 50-bar window ending at signal bar
         htf = get_htf_trend(client, symbol)
         opp = strat.decide_v15(row, wd, htf, btc_regime)
+        if opp is None:
+            return None
+        # Funding rate filter (live-only, not in backtest)
+        # Positive funding = longs pay shorts; Negative = shorts pay longs
+        # Skip if we'd be on the paying side with funding >= 0.1% magnitude
+        fr = client.funding_rate(symbol)
+        FUNDING_THRESHOLD = 0.001  # 0.1% = 0.001 in API format
+        if opp["dir"] == "SHORT" and fr <= -FUNDING_THRESHOLD:
+            log.info(f"{symbol}: skip SHORT (funding={fr*100:.4f}% <= -0.1%, shorts pay)")
+            return None
+        if opp["dir"] == "LONG" and fr >= FUNDING_THRESHOLD:
+            log.info(f"{symbol}: skip LONG (funding={fr*100:.4f}% >= +0.1%, longs pay)")
+            return None
         return opp
     except Exception as e:
         log.warning(f"analyze {symbol} failed: {e}")

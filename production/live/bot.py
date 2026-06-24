@@ -421,14 +421,40 @@ class Bot:
 
         if new_sl is not None:
             new_sl = self.filters.round_price(symbol, new_sl)
-            # replace SL order (algo)
-            if dbp.get("sl_client_id"):
-                self.client.cancel_algo_order(symbol, client_id=dbp["sl_client_id"])
             close_side = "SELL" if direction == "LONG" else "BUY"
+
+            # CRITICAL: validate new SL is on the correct side of current price.
+            # STOP_MARKET BUY (SHORT close) requires trigger ABOVE current price.
+            # STOP_MARKET SELL (LONG close) requires trigger BELOW current price.
+            # If price bounced back past the intended SL, the order would be invalid
+            # and we must NOT cancel the existing SL (leave protection in place).
+            try:
+                cur_mp = self.client.mark_price(symbol)
+            except BinanceError:
+                cur_mp = None
+            if cur_mp is not None:
+                if direction == "SHORT" and new_sl <= cur_mp:
+                    log.info(f"{symbol}: skip SL move to {new_sl:.6g} (<= mark {cur_mp:.6g}), "
+                             f"keeping current SL")
+                    return
+                if direction == "LONG" and new_sl >= cur_mp:
+                    log.info(f"{symbol}: skip SL move to {new_sl:.6g} (>= mark {cur_mp:.6g}), "
+                             f"keeping current SL")
+                    return
+
+            # ATOMIC SWAP: place new SL FIRST, then cancel old SL.
+            # This ensures the position is NEVER left without protection.
             sl_cid = self._cid(symbol, "sl")
+            old_sl_cid = dbp.get("sl_client_id")
             try:
                 self.client.new_stop_market(symbol, close_side, new_sl,
                                             client_id=sl_cid, close_position=True)
+                # New SL placed successfully → safe to cancel old SL
+                if old_sl_cid:
+                    try:
+                        self.client.cancel_algo_order(symbol, client_id=old_sl_cid)
+                    except BinanceError:
+                        pass  # old SL might have already triggered, ignore
                 self.db.update_position_fields(symbol, sl_price=new_sl, sl_client_id=sl_cid,
                                                be_moved=int(be_moved), trail_moved=int(trail_moved))
                 kind = "trail" if trail_moved else "breakeven"
@@ -436,11 +462,13 @@ class Bot:
                 self.db.log_event("move_sl", symbol, {"sl": new_sl, "kind": kind})
                 tg.notify_sl_move(symbol, new_sl, kind)
             except BinanceError as e:
-                log.warning(f"{symbol}: failed to move SL, re-placing original: {e}")
-                # ensure we still have protection
-                if not self.has_open_order_type(symbol, "STOP_MARKET"):
-                    self.client.new_stop_market(symbol, close_side, dbp["sl_price"],
-                                                client_id=self._cid(symbol, "sl"), close_position=True)
+                log.warning(f"{symbol}: failed to move SL ({e}), keeping current SL")
+                # New SL failed → old SL still in place (we didn't cancel it)
+                # Clean up the failed new SL if it partially exists
+                try:
+                    self.client.cancel_algo_order(symbol, client_id=sl_cid)
+                except BinanceError:
+                    pass
 
     # ---------------- entry scan ----------------
     def scan_entries(self, ex_positions, equity, avail):

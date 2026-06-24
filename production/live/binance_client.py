@@ -45,6 +45,7 @@ PERMANENT_CODES = {
     -4005,                             # qty greater than max
     -4046,                             # margin type already set (no need to change) - benign
     -4045,                             # leverage not changed (already at target) - benign
+    -4130,                             # open stop/TP with closePosition already exists in direction
 }
 # Codes that mean "the thing isn't there" -- treat as success-ish for idempotency
 NOT_FOUND_CODES = {-2011, -2013}  # cancel/query order does not exist
@@ -150,6 +151,16 @@ class BinanceClient:
     def mark_price(self, symbol):
         d = self._request("GET", "/fapi/v1/premiumIndex", {"symbol": symbol})
         return float(d["markPrice"])
+
+    def funding_rate(self, symbol):
+        """Current funding rate for a symbol (lastFundingRate from premiumIndex).
+        Positive = longs pay shorts; Negative = shorts pay longs.
+        Returns float (e.g. 0.0001 = 0.01%), or 0.0 on error."""
+        try:
+            d = self._request("GET", "/fapi/v1/premiumIndex", {"symbol": symbol})
+            return float(d.get("lastFundingRate", 0))
+        except (BinanceError, ValueError, TypeError):
+            return 0.0
 
     # ---------------- account / positions ----------------
     def balance(self):
@@ -307,11 +318,16 @@ class BinanceClient:
             out.append({
                 "symbol": o.get("symbol"),
                 "type": o.get("orderType") or o.get("type"),
+                "side": o.get("side", ""),
                 "orderId": o.get("algoId"),
                 "clientOrderId": o.get("clientAlgoId", ""),
                 "algoId": o.get("algoId"),
                 "clientAlgoId": o.get("clientAlgoId", ""),
                 "status": o.get("algoStatus"),
+                "triggerPrice": o.get("triggerPrice"),
+                "workingType": o.get("workingType", ""),
+                "closePosition": o.get("closePosition", False),
+                "reduceOnly": o.get("reduceOnly", False),
             })
         return out
 
