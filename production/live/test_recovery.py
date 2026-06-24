@@ -68,6 +68,10 @@ class FakeClient:
             return out
         return list(self._orders.get(symbol, []))
 
+    def open_algo_orders(self, symbol=None):
+        # Same shape as open_orders for this test; bot checks "type" == STOP_MARKET/TAKE_PROFIT_MARKET
+        return self.open_orders(symbol)
+
     def mark_price(self, symbol):
         for p in self._positions:
             if p["symbol"] == symbol:
@@ -108,6 +112,16 @@ class FakeClient:
                                 if o.get("orderId") != order_id and o.get("clientOrderId") != client_id]
         return None
 
+    def cancel_algo_order(self, symbol=None, algo_id=None, client_id=None):
+        # treat same as cancel_order for test purposes
+        target = algo_id or client_id
+        self.cancelled.append((symbol, target))
+        if symbol and target:
+            lst = self._orders.get(symbol, [])
+            self._orders[symbol] = [o for o in lst
+                                    if o.get("orderId") != target and o.get("clientOrderId") != target]
+        return None
+
 
 class FakeFilters:
     """Minimal filters stub: identity rounding, every symbol valid."""
@@ -134,6 +148,8 @@ def make_bot(fake_client, fake_filters, db):
     bot.btc_regime = "neutral"
     bot.last_decision_bar = None
     bot._startup_notified = True    # suppress startup noti in test
+    bot._last_time_sync = time.time()
+    bot._lock_fd = None
     return bot
 
 

@@ -227,21 +227,37 @@ class BinanceClient:
 
     def realized_pnl_since(self, symbol, entry_time):
         """Return (realized_pnl, exit_price, total_qty) for trades on `symbol`
-        since entry_time (ms). realized_pnl includes commission. Best-effort:
-        returns (None, None, None) if data unavailable."""
-        trades = self.user_trades(symbol, start_time=entry_time, limit=100)
-        if not trades:
-            return None, None, None
-        pnl = 0.0
+        since entry_time (ms). Best-effort: returns (None, None, None) if unavailable.
+
+        PnL is taken from the income API (REALIZED_PNL) because it is accurate on
+        both testnet and live. The userTrades endpoint on testnet often returns
+        realizedPnl=None, so we use it only for the exit price (last fill price).
+        """
+        # 1) Realized PnL from income API (most reliable)
+        pnl = None
+        try:
+            income = self._request("GET", "/fapi/v1/income", {
+                "symbol": symbol,
+                "startTime": int(entry_time),
+                "limit": 1000,
+            }, signed=True)
+            pnl = sum(float(i.get("income", 0) or 0)
+                      for i in income if i.get("incomeType") == "REALIZED_PNL")
+        except BinanceError as e:
+            log.warning(f"realized_pnl_since income API {symbol} failed: {e}")
+        except Exception as e:
+            log.warning(f"realized_pnl_since income parse {symbol} failed: {e}")
+
+        # 2) Exit price from latest user trade (best-effort)
         last_price = None
-        closed_qty = 0.0
-        for t in trades:
-            pnl += float(t.get("realizedPnl", 0) or 0) - float(t.get("commission", 0) or 0)
-            rp = float(t.get("realizedPnl", 0) or 0)
-            if rp != 0:  # a closing fill
-                last_price = float(t.get("price", 0) or 0)
-                closed_qty += float(t.get("qty", 0) or 0)
-        return pnl, last_price, (closed_qty or None)
+        try:
+            trades = self.user_trades(symbol, start_time=entry_time, limit=100)
+            if trades:
+                last_price = float(trades[-1].get("price", 0) or 0)
+        except Exception as e:
+            log.warning(f"realized_pnl_since userTrades {symbol} failed: {e}")
+
+        return pnl, last_price, None
 
     # ---------------- trading ----------------
     def set_leverage(self, symbol, leverage):

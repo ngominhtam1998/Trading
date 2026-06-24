@@ -19,6 +19,7 @@ Mode is chosen via BOT_MODE env var (testnet|dry|live), default testnet.
 import time
 import logging
 import signal
+import os
 from datetime import datetime, timezone
 
 from . import config
@@ -52,12 +53,41 @@ signal.signal(signal.SIGTERM, _stop)
 class Bot:
     def __init__(self):
         log.info(f"=== Starting bot in MODE={config.MODE} STRATEGY={config.STRATEGY_LEVEL} ===")
+        self._acquire_instance_lock()
         self.client = BinanceClient()
         self.db = StateDB(config.STATE_DB_PATH)
         self.filters = ExchangeFilters(self.client)
         self.btc_regime = "neutral"
         self.last_decision_bar = None
         self._startup_notified = False
+        self._last_time_sync = time.time()
+
+    def _acquire_instance_lock(self):
+        """Prevent two bot processes with the same strategy level from running.
+        Uses a file lock on Linux; falls back gracefully on Windows (dev only)."""
+        lock_path = f"/tmp/scbot_lock_{config.MODE}_{config.STRATEGY_LEVEL}.lock"
+        try:
+            import fcntl
+            self._lock_fd = open(lock_path, "w")
+            try:
+                fcntl.flock(self._lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                log.info(f"Acquired instance lock {lock_path}")
+            except (IOError, OSError) as e:
+                log.critical(f"Another bot instance is already running ({lock_path}). Exiting.")
+                raise SystemExit(1) from e
+        except ImportError:
+            log.warning("fcntl not available (Windows/dev); instance lock disabled")
+            self._lock_fd = None
+
+    def _sync_time_if_needed(self):
+        """Resync server time periodically to avoid timestamp drift."""
+        if time.time() - self._last_time_sync >= 1800:  # 30 min
+            try:
+                self.client._sync_time()
+                self._last_time_sync = time.time()
+                log.info("Time resynced")
+            except Exception as e:
+                log.warning(f"Periodic time sync failed: {e}")
 
     # ---------------- helpers ----------------
     def _cid(self, symbol, kind):
@@ -471,23 +501,29 @@ class Bot:
                 log.info(f"{symbol}: no longer on exchange -> closed (SL/TP hit)")
                 self.cancel_protection(symbol)
                 pnl, exit_px, _ = self._realized(symbol, dbp)
-                # Determine if SL or TP hit by comparing exit price to SL/TP prices
+                # Determine if SL or TP hit by comparing exit price to SL/TP levels
                 sl_price = dbp.get("sl_price", 0)
                 tp_price = dbp.get("tp_price", 0)
                 direction = dbp.get("direction", "LONG")
                 is_sl = False
+                is_tp = False
                 if exit_px and sl_price and tp_price:
-                    # Primary: compare exit price to SL/TP levels
+                    # Primary: compare exit price to SL/TP levels (allow 0.2% tolerance)
                     if direction == "LONG":
-                        is_sl = exit_px <= sl_price * 1.002  # within 0.2% of SL
+                        is_sl = exit_px <= sl_price * 1.002
+                        is_tp = exit_px >= tp_price * 0.998
                     else:
                         is_sl = exit_px >= sl_price * 0.998
-                elif pnl is not None:
-                    # Fallback: if exit price unavailable, use PnL sign
-                    # SL hit → loss (pnl < 0), TP hit → profit (pnl >= 0)
-                    is_sl = pnl < 0
-                    log.debug(f"{symbol}: exit_px unavailable, using PnL sign for SL/TP detection (pnl={pnl})")
-                reason = "SL hit" if is_sl else "TP hit"
+                        is_tp = exit_px <= tp_price * 1.002
+                # Fallback: if price not near SL/TP or unavailable, use PnL sign
+                if not is_sl and not is_tp and pnl is not None:
+                    if pnl < 0:
+                        is_sl = True
+                    elif pnl > 0:
+                        is_tp = True
+                    log.debug(f"{symbol}: exit_px={exit_px} not near SL={sl_price}/TP={tp_price}, "
+                              f"using PnL sign (pnl={pnl}) -> reason={('SL' if is_sl else 'TP' if is_tp else 'unknown')}")
+                reason = "SL hit" if is_sl else ("TP hit" if is_tp else "closed (unknown)")
                 self.db.record_closed(symbol, direction, dbp["entry_price"],
                                       exit_px or 0, dbp["qty"], pnl or 0.0,
                                       reason, dbp["entry_time"])
@@ -591,19 +627,18 @@ class Bot:
                              f"keeping current SL")
                     return
 
-            # ATOMIC SWAP: place new SL FIRST, then cancel old SL.
-            # This ensures the position is NEVER left without protection.
+            # Cancel old SL FIRST, then place new SL.
+            # Binance rejects a new closePosition STOP if another exists (-4130),
+            # so we accept a tiny protection window and immediately restore it.
             sl_cid = self._cid(symbol, "sl")
             old_sl_cid = dbp.get("sl_client_id")
+            old_sl_price = dbp.get("sl_price")
             try:
+                if old_sl_cid:
+                    self.client.cancel_algo_order(symbol, client_id=old_sl_cid)
+                # Small window with no SL; place new immediately
                 self.client.new_stop_market(symbol, close_side, new_sl,
                                             client_id=sl_cid, close_position=True)
-                # New SL placed successfully → safe to cancel old SL
-                if old_sl_cid:
-                    try:
-                        self.client.cancel_algo_order(symbol, client_id=old_sl_cid)
-                    except BinanceError:
-                        pass  # old SL might have already triggered, ignore
                 self.db.update_position_fields(symbol, sl_price=new_sl, sl_client_id=sl_cid,
                                                be_moved=int(be_moved), trail_moved=int(trail_moved))
                 kind = "trail" if trail_moved else "breakeven"
@@ -611,8 +646,17 @@ class Bot:
                 self.db.log_event("move_sl", symbol, {"sl": new_sl, "kind": kind})
                 tg.notify_sl_move(symbol, new_sl, kind)
             except BinanceError as e:
-                log.warning(f"{symbol}: failed to move SL ({e}), keeping current SL")
-                # New SL failed → old SL still in place (we didn't cancel it)
+                log.warning(f"{symbol}: failed to move SL ({e}), attempting to restore old SL")
+                # Try to restore old SL so the position is never left naked
+                if old_sl_cid:
+                    try:
+                        self.client.new_stop_market(symbol, close_side, old_sl_price,
+                                                    client_id=old_sl_cid, close_position=True)
+                        log.warning(f"{symbol}: restored old SL at {old_sl_price:.6g}")
+                    except BinanceError as e2:
+                        log.critical(f"{symbol}: CRITICAL — cannot restore old SL ({e2}); "
+                                     f"closing position for safety")
+                        self._market_close(symbol, dbp["direction"], dbp["qty"], "sl_restore_failed")
                 # Clean up the failed new SL if it partially exists
                 try:
                     self.client.cancel_algo_order(symbol, client_id=sl_cid)
@@ -681,6 +725,7 @@ class Bot:
         while RUNNING:
             cycle_start = time.time()
             try:
+                self._sync_time_if_needed()
                 self.btc_regime = sa.get_btc_regime_live(self.client)
                 ex_positions = {p["symbol"]: p for p in self.client.position_risk()}
                 equity, avail = self.get_equity()
@@ -708,8 +753,10 @@ class Bot:
                         tg.notify_daily_halt(equity, state.get("start_equity", equity))
                         state["halt_notified"] = True
                         self.db.set_kv("daily", state)
-                else:
+                elif self._is_decision_bar():
                     self.scan_entries(ex_positions, equity, avail)
+                else:
+                    log.info(f"Non-decision bar ({self._bar_index() % config.DECISION_EVERY_BARS + 1}/{config.DECISION_EVERY_BARS}); skip entry scan, manage only")
 
                 # listenKey keepalive every 30 min (kept for future WS use)
                 if time.time() - listen_key_ts > 1800:
@@ -730,6 +777,21 @@ class Bot:
         log.info("Bot stopped cleanly.")
         tg.notify_shutdown(config.STRATEGY_LEVEL, "manual")
         self.db.close()
+
+    def _bar_index(self):
+        """Current bar index (0-based) based on BAR_SECONDS."""
+        return int(time.time() // config.BAR_SECONDS)
+
+    def _is_decision_bar(self):
+        """True if we should scan entries this bar (matches backtest DECISION_EVERY)."""
+        if self.last_decision_bar is None:
+            self.last_decision_bar = self._bar_index()
+            return True
+        current = self._bar_index()
+        if current - self.last_decision_bar >= config.DECISION_EVERY_BARS:
+            self.last_decision_bar = current
+            return True
+        return False
 
     def _sleep_to_next_bar(self):
         now = time.time()
