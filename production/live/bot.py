@@ -229,6 +229,8 @@ class Bot:
             "adopted": 1,
         })
         self.db.log_event("adopt_orphan", symbol, {"entry": entry, "sl": sl_price})
+        tg.notify_orphan_adopted(symbol, direction, qty, entry, lev,
+                                 sl_price, tp_price, config.ORPHAN_SL_PCT)
 
     def _realized(self, symbol, dbp):
         """Best-effort realized PnL + exit price after a close. Never raises."""

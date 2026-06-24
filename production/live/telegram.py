@@ -219,6 +219,23 @@ def notify_sl_move(symbol, new_sl, kind):
     return send(msg)
 
 
+def notify_orphan_adopted(symbol, direction, qty, entry, lev, sl_price, tp_price, sl_pct):
+    """Notification when bot adopts an orphan position (found on exchange, not in DB).
+    Happens when bot restarts with fresh DB or after crash."""
+    emoji = "🟢" if direction == "LONG" else "🔴"
+    when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    notional = qty * entry
+    tp_pct = sl_pct * 3.5
+    msg = (f"{emoji} <b>ADOPT ORPHAN</b> — {symbol}\n"
+           f"├ Hướng: <b>{direction}</b>  |  Đòn bẩy: <b>{lev}x</b>\n"
+           f"├ Giá vào: <b>{entry:.6g}</b>\n"
+           f"├ Khối lượng: <b>{qty}</b>  (~{_fmt_money(notional)})\n"
+           f"├ SL: <b>{sl_price:.6g}</b> ({sl_pct:.2f}%)\n"
+           f"├ TP: <b>{tp_price:.6g}</b> ({tp_pct:.2f}%)\n"
+           f"└ Tìm thấy khi khởi động — {when}")
+    return send(msg)
+
+
 def notify_error(symbol, error_msg):
     msg = (f"⚠️ <b>LỖI</b> — {symbol}\n"
            f"└ {error_msg}")
