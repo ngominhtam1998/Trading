@@ -116,8 +116,16 @@ bar-resolution backtest.
 ## Tests
 
 ```bash
-# Crash-recovery logic (no keys needed)
-python -m live.test_recovery
+# Mock tests (no API keys needed)
+python -m live.test_recovery          # 17/17 crash-recovery scenarios
+python -m live.test_decision_bars     # 6/6 DECISION_EVERY_BARS cadence
+python -m live.test_sl_move           # 6/6 SL move (BE/trail) logic
+python -m live.test_realized_pnl      # 4/4 income API PnL detection
+
+# Real-API tests (need valid .env keys, run on VPS)
+python -m live.test_data_verify       # 40/40 data sanity checks
+python -m live.test_sl_fix             # 8/9 SL placement edge cases
+python -m live.test_funding            # 10/10 funding rate checks
 ```
 
 ## Important notes

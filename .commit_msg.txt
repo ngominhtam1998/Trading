@@ -1,30 +1,7 @@
-fix: critical live bot logic fixes (SL move, decision cadence, PnL detection)
+docs: update AGENTS.md and README_LIVE.md with new test commands
 
-This commit addresses multiple critical issues discovered during deep audit:
-
-1. SL move (BE/trail) now works:
-   - Binance rejects a second closePosition STOP order (-4130).
-   - Cancel old SL first, then place new SL.
-   - If new SL placement fails, restore old SL or emergency close.
-
-2. DECISION_EVERY_BARS now enforced:
-   - Bot previously scanned entries every 15m bar, ignoring backtest cadence.
-   - Added _is_decision_bar() so entry scan only runs every N bars as configured.
-
-3. SL/TP detection fixed on testnet (and more robust on live):
-   - userTrades endpoint on testnet returns realizedPnl=None.
-   - realized_pnl_since() now uses /fapi/v1/income API for accurate PnL.
-   - Detection also checks exit price proximity to TP level and adds "unknown" reason.
-
-4. Multi-instance protection:
-   - File lock (fcntl) prevents two processes of same bot from running concurrently.
-
-5. Proactive time sync:
-   - Resync server time every 30 minutes to avoid timestamp drift.
-
-6. Tests:
-   - Updated test_recovery for algo-order API.
-   - Added test_decision_bars, test_sl_move, test_realized_pnl.
+Added mock test commands (test_decision_bars, test_sl_move, test_realized_pnl)
+and updated key fixes list to reflect the recent live bot fixes.
 
 Generated with [Devin](https://devin.ai)
 

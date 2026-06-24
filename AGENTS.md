@@ -27,10 +27,18 @@ tail -f /opt/trading/production/live/bot_testnet_lv4.log  # log
 - **Bot status + PnL**: `python check_bots_status.py` (shows balance, positions, open orders, today's realized PnL)
 
 ### Build/Test commands
+#### Mock tests (no API keys, chạy local)
+- Test recovery: `python -m live.test_recovery` (17/17 PASS)
+- Test decision cadence: `python -m live.test_decision_bars` (6/6 PASS)
+- Test SL move: `python -m live.test_sl_move` (6/6 PASS)
+- Test realized PnL: `python -m live.test_realized_pnl` (4/4 PASS)
+
+#### Real-API tests (cần .env keys, chạy trên VPS)
 - Test data verify: `python -m live.test_data_verify` (40/40 PASS)
 - Test SL fix: `python -m live.test_sl_fix` (8/9 PASS)
 - Test funding: `python -m live.test_funding` (10/10 PASS)
-- Test recovery: `python -m live.test_recovery` (17/17 PASS)
+
+#### Utility
 - Cleanup: `python -m live.cleanup`
 
 ### Git
@@ -51,7 +59,7 @@ tail -f /opt/trading/production/live/bot_testnet_lv4.log  # log
 - Không tuyên bố "xong" khi chưa verify bằng lệnh/test thực tế.
 
 ### Key fixes đã apply
-1. SL atomic swap (place new before cancel old + price validation)
+1. SL move (BE/trail): cancel old SL first, then place new SL; restore old SL if new fails
 2. Telegram SSL (verify=False trên testnet, verify=True trên live)
 3. Funding rate filter (skip SHORT+funding âm, LONG+funding dương >= 0.1%)
 4. -4028, -2027, -4046, -4045, -4130 in PERMANENT_CODES
@@ -59,7 +67,10 @@ tail -f /opt/trading/production/live/bot_testnet_lv4.log  # log
 6. Cooldown 6 bar sau 2 SL liên tiếp (match backtest)
 7. Liquidation warning (Telegram khi price trong 20% liq price)
 8. Funding cost tracking (warn khi daily funding > 5% equity)
-9. SL vs TP detection trên close (so sánh exit price vs SL/TP price)
+9. SL vs TP detection trên close (income API + exit price + PnL sign fallback)
+10. DECISION_EVERY_BARS enforcement (entry scan matches backtest cadence)
+11. Multi-instance file lock (prevent duplicate bot processes)
+12. Proactive time sync every 30 minutes
 
 ### Khi lên live
 1. SSH vào VPS
