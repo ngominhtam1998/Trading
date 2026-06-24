@@ -41,7 +41,7 @@ D:\Tam\trading\
 ├── fix_vps.py                          # Script add swap VPS
 ├── fix_vps_logs.py                     # Script fix duplicate log + pull code
 ├── production/
-│   ├── strategy_aggressive.py          # V15r2 (conservative, +39%/mo, 0 LIQ)
+│   ├── strategy_aggressive_lv1.py      # LV1 (conservative, +39%/mo, 0 LIQ)
 │   ├── strategy_aggressive_lv{2..6}.py # LV2-LV6 (risk tăng dần)
 │   ├── strategy_aggressive_lv{2..6}_test.py  # 31 tháng backtest
 │   ├── continuous_2024_*.py            # Continuous backtest Jan2024–Jun2026
@@ -190,7 +190,7 @@ BOT_MODE=testnet BOT_STRATEGY=lv6 /opt/trading/venv/bin/python -m live.cleanup
 ### File `.env` (KHÔNG commit, đã trong .gitignore)
 ```
 BOT_MODE=testnet
-BOT_STRATEGY=v15  # override bằng env var khi chạy
+BOT_STRATEGY=lv1  # override bằng env var khi chạy
 BINANCE_TESTNET_KEY_LV4=...
 BINANCE_TESTNET_SECRET_LV4=...
 BINANCE_TESTNET_KEY_LV5=...

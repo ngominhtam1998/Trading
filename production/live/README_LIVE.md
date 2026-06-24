@@ -1,6 +1,6 @@
 # Live Trading Bot — Binance USDT-M Futures
 
-Execution + safety layer around the `strategy_aggressive` (V15r2) strategy.
+Execution + safety layer around the `strategy_aggressive_lv1` (LV1) strategy.
 **Trading logic is unchanged** — this only adds order execution, error handling,
 and crash recovery.
 
@@ -80,7 +80,7 @@ live/
 ├── binance_client.py    # signed REST client: retries, backoff, error handling
 ├── exchange_filters.py  # per-symbol precision / min-notional rounding
 ├── state_db.py          # SQLite: positions, closed trades, events, kv
-├── strategy_adapter.py  # live klines -> decide_v15 (no logic change)
+├── strategy_adapter.py  # live klines -> decide_v15 (shared function name, no logic change)
 ├── bot.py               # reconciliation + main loop (entry/manage)
 └── test_recovery.py     # offline crash-recovery self-test (no keys needed)
 ```

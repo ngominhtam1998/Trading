@@ -6,7 +6,7 @@ Modes:
 - "live"   : Real money on Binance Futures mainnet. USE ONLY AFTER TESTNET VERIFIED.
 
 Strategy levels (set via BOT_STRATEGY env var):
-- "v15": V15r2  (conservative, 0 LIQ, +39%/mo avg)
+- "lv1": LV1    (conservative, 0 LIQ, +39%/mo avg)
 - "lv2": LV2    (aggressive, 0 LIQ, +74%/mo avg)
 - "lv3": LV3    (high risk, 9 LIQ, +182%/mo avg)
 - "lv4": LV4    (very high risk, 23 LIQ, +283%/mo avg)
@@ -50,14 +50,14 @@ _load_dotenv()
 MODE = os.environ.get("BOT_MODE", "testnet")  # testnet | dry | live
 
 # === STRATEGY LEVEL ===
-# Must be one of: v15, lv2, lv3, lv4, lv5, lv6
-STRATEGY_LEVEL = os.environ.get("BOT_STRATEGY", "v15").lower()
-if STRATEGY_LEVEL not in ("v15", "lv2", "lv3", "lv4", "lv5", "lv6"):
-    raise ValueError(f"Invalid BOT_STRATEGY='{STRATEGY_LEVEL}'. Must be v15|lv2|lv3|lv4|lv5|lv6")
+# Must be one of: lv1, lv2, lv3, lv4, lv5, lv6
+STRATEGY_LEVEL = os.environ.get("BOT_STRATEGY", "lv1").lower()
+if STRATEGY_LEVEL not in ("lv1", "lv2", "lv3", "lv4", "lv5", "lv6"):
+    raise ValueError(f"Invalid BOT_STRATEGY='{STRATEGY_LEVEL}'. Must be lv1|lv2|lv3|lv4|lv5|lv6")
 
 # Map strategy level -> module name
 STRATEGY_MODULE = {
-    "v15": "strategy_aggressive",          # V15r2 baseline
+    "lv1": "strategy_aggressive_lv1",      # LV1 baseline (was V15r2)
     "lv2": "strategy_aggressive_lv2",
     "lv3": "strategy_aggressive_lv3",
     "lv4": "strategy_aggressive_lv4",
@@ -92,7 +92,7 @@ def get_api_keys():
     """Return (key, secret). For testnet/live, prefer a per-strategy key
     (e.g. BINANCE_TESTNET_KEY_LV4) so each bot runs on its OWN account and
     never adopts a sibling bot's positions. Falls back to the generic key."""
-    suffix = STRATEGY_LEVEL.upper()  # v15->V15, lv4->LV4
+    suffix = STRATEGY_LEVEL.upper()  # lv1->LV1, lv4->LV4
     if MODE == "live":
         key = os.environ.get(f"BINANCE_LIVE_KEY_{suffix}", "") or os.environ.get("BINANCE_LIVE_KEY", "")
         sec = os.environ.get(f"BINANCE_LIVE_SECRET_{suffix}", "") or os.environ.get("BINANCE_LIVE_SECRET", "")
@@ -131,8 +131,8 @@ COINS_UNIVERSE_SIZE = 60     # how many top-volume symbols to scan each cycle
 
 # Strategy-specific BE/Trail R multiples (for live SL management)
 # These must match the backtest logic in each strategy module
-_BE_R = {"v15": 0.5, "lv2": 0.7, "lv3": 0.9, "lv4": 1.1, "lv5": 1.3, "lv6": 1.5}
-_TRAIL_R = {"v15": 1.2, "lv2": 1.5, "lv3": 2.0, "lv4": 2.5, "lv5": 3.0, "lv6": 3.5}
+_BE_R = {"lv1": 0.5, "lv2": 0.7, "lv3": 0.9, "lv4": 1.1, "lv5": 1.3, "lv6": 1.5}
+_TRAIL_R = {"lv1": 1.2, "lv2": 1.5, "lv3": 2.0, "lv4": 2.5, "lv5": 3.0, "lv6": 3.5}
 BE_R_MULTIPLE = _BE_R[STRATEGY_LEVEL]
 TRAIL_R_MULTIPLE = _TRAIL_R[STRATEGY_LEVEL]
 
@@ -144,7 +144,7 @@ QUOTE_ASSET = "USDT"
 BAR_INTERVAL = "15m"
 HTF_INTERVAL = "1h"
 BAR_SECONDS = 15 * 60
-DECISION_EVERY_BARS = {"v15": 16, "lv2": 12, "lv3": 8, "lv4": 6, "lv5": 4, "lv6": 4}[STRATEGY_LEVEL]
+DECISION_EVERY_BARS = {"lv1": 16, "lv2": 12, "lv3": 8, "lv4": 6, "lv5": 4, "lv6": 4}[STRATEGY_LEVEL]
 MAX_HOLD_BARS = 48           # close after 48 bars (12h)
 KLINES_LOOKBACK = 260        # bars to fetch for indicators (EMA200 needs >200)
 

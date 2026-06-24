@@ -1,6 +1,6 @@
 """Live trading bot for Binance USDT-M Futures.
 
-Trading logic is UNCHANGED (reused from strategy_aggressive.decide_v15).
+Trading logic is UNCHANGED (reused from strategy_aggressive_lv1.decide_v15).
 This file is the execution + safety layer:
 
   * Real STOP_MARKET / TAKE_PROFIT_MARKET orders on the exchange protect every

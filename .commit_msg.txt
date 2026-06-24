@@ -1,0 +1,27 @@
+fix: critical safety fixes before going live
+
+1. SSL verification: verify=False only on testnet, verify=True on live
+   (binance_client.py + telegram.py) - prevents MITM on real money API calls
+
+2. Cooldown after 2 consecutive SLs on same symbol (matches backtest logic)
+   - Track consecutive_sls per symbol in DB kv
+   - Skip re-entry for 6 bars (90 min) after 2 SLs
+   - Reset counter on TP hit
+   - Telegram notification when cooldown activates
+
+3. Liquidation warning: alert when price within 20% of liquidation price
+   - Uses get_liquidation_threshold from strategy module
+   - Telegram notification (once per position)
+   - Prevents silent liquidation when SL might not trigger in time
+
+4. Funding cost tracking: warn when daily funding > 5% of equity
+   - Estimate funding cost on each position close
+   - Track daily cumulative in DB
+   - Telegram notification when threshold exceeded
+
+Also: detect SL vs TP on position close (compare exit price to SL/TP prices)
+      - previously all closes logged as "SL/TP hit" without distinction
+
+Generated with [Devin](https://devin.ai)
+
+Co-Authored-By: Devin <158243242+devin-ai-integration[bot]@users.noreply.github.com>
