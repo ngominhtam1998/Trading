@@ -24,6 +24,7 @@ tail -f /opt/trading/production/live/bot_testnet_lv4.log  # log
 - Repo: `D:\Tam\trading`
 - Run: `cd D:\Tam\trading\production; $env:BOT_MODE="testnet"; $env:BOT_STRATEGY="lv4"; python -m live.bot`
 - SSH scripts: `setup_vps.py`, `setup_vps_bots.py`, `start_vps_bots.py`, `check_vps_bots.py`, `fix_vps.py`, `fix_vps_logs.py`
+- **Bot status + PnL**: `python check_bots_status.py` (shows balance, positions, open orders, today's realized PnL)
 
 ### Build/Test commands
 - Test data verify: `python -m live.test_data_verify` (40/40 PASS)
