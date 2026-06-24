@@ -58,6 +58,16 @@ now = datetime.now(timezone.utc)
 today_start_ms = int(datetime(now.year, now.month, now.day, 0, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
 now_ms = int(now.timestamp() * 1000)
 
+total_wallet = 0.0
+total_upnl = 0.0
+total_equity = 0.0
+total_realized_today = 0.0
+total_commission_today = 0.0
+total_funding_today = 0.0
+total_closed_today = 0
+
+total_initial = 5000 * 3  # 3 bots
+
 log(f"Check time: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
 # Systemd status
@@ -83,11 +93,12 @@ for level in ['lv4', 'lv5', 'lv6']:
     try:
         bal = api_call(k, s, 'GET', '/fapi/v3/balance')
         usdt = next((x for x in bal if x['asset'] == 'USDT'), {})
-        log(f"  Balance: {usdt.get('balance')} USDT | available: {usdt.get('availableBalance')}")
+        wallet = float(usdt.get('balance', 0) or 0)
+        available = float(usdt.get('availableBalance', 0) or 0)
 
         pos = api_call(k, s, 'GET', '/fapi/v3/positionRisk')
         active = [p for p in pos if abs(float(p.get('positionAmt', 0))) > 0]
-        total_upnl = 0.0
+        bot_upnl = 0.0
         if not active:
             log(f"  Positions: none")
         else:
@@ -95,9 +106,18 @@ for level in ['lv4', 'lv5', 'lv6']:
             for p in active:
                 amt = float(p['positionAmt'])
                 upnl = float(p['unRealizedProfit'])
-                total_upnl += upnl
+                bot_upnl += upnl
                 log(f"    {p['symbol']:12s} {'SHORT' if amt < 0 else 'LONG':5s} amt={abs(amt):.2f} entry={p['entryPrice']} mark={p['markPrice']} upnl={upnl:+.2f} liq={p['liquidationPrice']}")
-        log(f"  Total unrealized PnL: {total_upnl:+.2f} USDT")
+        bot_equity = wallet + bot_upnl
+        bot_pnl = bot_equity - 5000
+        total_wallet += wallet
+        total_upnl += bot_upnl
+        total_equity += bot_equity
+        log(f"  Wallet balance: {wallet:.2f} USDT")
+        log(f"  Available:      {available:.2f} USDT")
+        log(f"  Unrealized PnL: {bot_upnl:+.2f} USDT")
+        log(f"  Total equity:   {bot_equity:.2f} USDT")
+        log(f"  PnL vs 5k init: {bot_pnl:+.2f} USDT")
 
         orders = api_call(k, s, 'GET', '/fapi/v1/openAlgoOrders')
         if not orders:
@@ -120,6 +140,9 @@ for level in ['lv4', 'lv5', 'lv6']:
         realized = by_type.get('REALIZED_PNL', 0)
         commission = by_type.get('COMMISSION', 0)
         funding = by_type.get('FUNDING_FEE', 0)
+        total_realized_today += realized
+        total_commission_today += commission
+        total_funding_today += funding
         log(f"\\n  Today:")
         log(f"    Realized PnL: {realized:+.2f} USDT")
         log(f"    Commission:   {commission:+.2f} USDT")
@@ -127,6 +150,7 @@ for level in ['lv4', 'lv5', 'lv6']:
         closed = [x for x in today_income if x.get('incomeType') == 'REALIZED_PNL']
         sl = sum(1 for c in closed if float(c['income']) < 0)
         tp = sum(1 for c in closed if float(c['income']) > 0)
+        total_closed_today += len(closed)
         log(f"    Closed trades: {len(closed)} (SL={sl}, TP={tp})")
 
     except Exception as e:
@@ -134,6 +158,16 @@ for level in ['lv4', 'lv5', 'lv6']:
         import traceback
         log(traceback.format_exc())
 
+log("\\n" + "="*70)
+log("TOTAL 3 BOTS")
+log(f"  Wallet balance:  {total_wallet:.2f} USDT")
+log(f"  Unrealized PnL:  {total_upnl:+.2f} USDT")
+log(f"  Total equity:    {total_equity:.2f} USDT")
+log(f"  PnL vs 15k init: {total_equity - total_initial:+.2f} USDT")
+log(f"\\n  Today realized:  {total_realized_today:+.2f} USDT")
+log(f"  Today commission: {total_commission_today:+.2f} USDT")
+log(f"  Today funding:    {total_funding_today:+.2f} USDT")
+log(f"  Today closed trades: {total_closed_today}")
 log("\\nDone.")
 '''
 
