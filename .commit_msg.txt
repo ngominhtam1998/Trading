@@ -1,20 +1,11 @@
-fix: live safety fixes + backtest corrections
+refactor: replace emergency_stop with stop_bots
 
-Live fixes:
-- Liquidation warning now uses exchange liquidationPrice from positionRisk
-  instead of empirical formula; falls back to estimate only when missing
-- Leverage capped to exchange max from exchangeInfo before set_leverage
-  (prevents -4028 / -2027 failures on low-max-leverage symbols)
-- MAX_CONCURRENT_NEUTRAL hard-coded per level to match backtest
-  (lv1=7, lv2=8, lv3=10, lv4=12, lv5=15, lv6=18)
+User explicitly prohibits emergency position-closing: positions must
+remain on the exchange with their SL/TP. Emergency close is a "death trap"
+in the user's view.
 
-Operational:
-- Add emergency_stop.py: 1-click stop all 3 bots + close all positions + cancel orders
-
-Backtest corrections (for future use):
-- All strategy files: fetch klines from futures API
-  (https://fapi.binance.com/fapi/v1/klines) instead of spot API
-- FEE_PCT raised from 0.01% to 0.02% (taker fee on Binance Futures)
+- Remove emergency_stop.py
+- Add stop_bots.py: stops all 3 systemd services but leaves positions open
 
 Generated with [Devin](https://devin.ai)
 
