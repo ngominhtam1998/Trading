@@ -39,10 +39,14 @@ tail -f /opt/trading/production/live/bot_testnet_lv4.log  # log
 
 ### Key fixes đã apply
 1. SL atomic swap (place new before cancel old + price validation)
-2. Telegram SSL (verify=False + warning log)
+2. Telegram SSL (verify=False trên testnet, verify=True trên live)
 3. Funding rate filter (skip SHORT+funding âm, LONG+funding dương >= 0.1%)
 4. -4028, -2027, -4046, -4045, -4130 in PERMANENT_CODES
 5. Margin auto-scale (check avail >= margin/pos)
+6. Cooldown 6 bar sau 2 SL liên tiếp (match backtest)
+7. Liquidation warning (Telegram khi price trong 20% liq price)
+8. Funding cost tracking (warn khi daily funding > 5% equity)
+9. SL vs TP detection trên close (so sánh exit price vs SL/TP price)
 
 ### Khi lên live
 1. SSH vào VPS
