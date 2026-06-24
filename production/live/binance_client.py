@@ -226,14 +226,15 @@ class BinanceClient:
             return []
 
     def realized_pnl_since(self, symbol, entry_time):
-        """Return (realized_pnl, exit_price, total_qty) for trades on `symbol`
+        """Return (net_pnl, exit_price, total_qty) for trades on `symbol`
         since entry_time (ms). Best-effort: returns (None, None, None) if unavailable.
 
-        PnL is taken from the income API (REALIZED_PNL) because it is accurate on
-        both testnet and live. The userTrades endpoint on testnet often returns
-        realizedPnl=None, so we use it only for the exit price (last fill price).
+        net_pnl = REALIZED_PNL + COMMISSION + FUNDING_FEE from the income API
+        (commission and funding are already negative in the API). The income API is
+        accurate on both testnet and live, unlike userTrades which returns
+        realizedPnl=None on testnet, so userTrades is used only for the exit price.
         """
-        # 1) Realized PnL from income API (most reliable)
+        # 1) Net realized PnL from income API (most reliable)
         pnl = None
         try:
             income = self._request("GET", "/fapi/v1/income", {
@@ -241,8 +242,9 @@ class BinanceClient:
                 "startTime": int(entry_time),
                 "limit": 1000,
             }, signed=True)
+            relevant = ("REALIZED_PNL", "COMMISSION", "FUNDING_FEE")
             pnl = sum(float(i.get("income", 0) or 0)
-                      for i in income if i.get("incomeType") == "REALIZED_PNL")
+                      for i in income if i.get("incomeType") in relevant)
         except BinanceError as e:
             log.warning(f"realized_pnl_since income API {symbol} failed: {e}")
         except Exception as e:

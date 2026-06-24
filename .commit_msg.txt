@@ -1,7 +1,9 @@
-docs: update AGENTS.md and README_LIVE.md with new test commands
+fix: review refinements for live bot fixes
 
-Added mock test commands (test_decision_bars, test_sl_move, test_realized_pnl)
-and updated key fixes list to reflect the recent live bot fixes.
+- realized_pnl_since now returns NET pnl (REALIZED_PNL + COMMISSION +
+  FUNDING_FEE) so Telegram exit PnL matches check_bots_status.py.
+- Remove unused os import; clearer non-decision-bar log message.
+- test_realized_pnl: verify commission/funding included, TRANSFER excluded.
 
 Generated with [Devin](https://devin.ai)
 

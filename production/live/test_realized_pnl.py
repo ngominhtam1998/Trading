@@ -34,7 +34,9 @@ client.time_offset = 0
 income_data = [
     {"incomeType": "REALIZED_PNL", "income": "1.5", "symbol": "BTCUSDT", "time": 1000},
     {"incomeType": "COMMISSION", "income": "-0.02", "symbol": "BTCUSDT", "time": 1000},
+    {"incomeType": "FUNDING_FEE", "income": "-0.01", "symbol": "BTCUSDT", "time": 1500},
     {"incomeType": "REALIZED_PNL", "income": "2.5", "symbol": "BTCUSDT", "time": 2000},
+    {"incomeType": "TRANSFER", "income": "100.0", "symbol": "BTCUSDT", "time": 2500},
 ]
 trades_data = [
     {"symbol": "BTCUSDT", "price": "100.0", "qty": "1", "realizedPnl": None, "commission": "0"},
@@ -54,7 +56,9 @@ client.user_trades = lambda symbol, start_time=None, limit=50: trades_data
 print("=== REALIZED_PNL INCOME API TEST ===")
 
 pnl, exit_px, _ = client.realized_pnl_since("BTCUSDT", 0)
-check("PnL sums REALIZED_PNL only", pnl == 4.0, f"pnl={pnl} (expected 4.0)")
+# net = 1.5 - 0.02 - 0.01 + 2.5 = 3.97 (TRANSFER excluded)
+check("net PnL = realized+commission+funding", abs(pnl - 3.97) < 1e-9, f"pnl={pnl} (expected 3.97)")
+check("TRANSFER excluded from PnL", pnl < 100, f"pnl={pnl} should not include transfer")
 check("exit price from last user trade", exit_px == 101.0, f"exit_px={exit_px} (expected 101.0)")
 
 # Test fallback when income API fails

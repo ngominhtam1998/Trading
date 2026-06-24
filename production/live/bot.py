@@ -19,7 +19,6 @@ Mode is chosen via BOT_MODE env var (testnet|dry|live), default testnet.
 import time
 import logging
 import signal
-import os
 from datetime import datetime, timezone
 
 from . import config
@@ -756,7 +755,9 @@ class Bot:
                 elif self._is_decision_bar():
                     self.scan_entries(ex_positions, equity, avail)
                 else:
-                    log.info(f"Non-decision bar ({self._bar_index() % config.DECISION_EVERY_BARS + 1}/{config.DECISION_EVERY_BARS}); skip entry scan, manage only")
+                    bars_left = config.DECISION_EVERY_BARS - (self._bar_index() - self.last_decision_bar)
+                    log.info(f"Non-decision bar; skip entry scan, manage only "
+                             f"(next scan in ~{max(0, bars_left)} bars)")
 
                 # listenKey keepalive every 30 min (kept for future WS use)
                 if time.time() - listen_key_ts > 1800:
