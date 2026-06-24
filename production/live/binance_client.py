@@ -46,6 +46,8 @@ PERMANENT_CODES = {
     -4046,                             # margin type already set (no need to change) - benign
     -4045,                             # leverage not changed (already at target) - benign
     -4130,                             # open stop/TP with closePosition already exists in direction
+    -4028,                             # leverage not valid for this symbol (e.g. METUSDT max 10x)
+    -2027,                             # exceeded max position at current leverage
 }
 # Codes that mean "the thing isn't there" -- treat as success-ish for idempotency
 NOT_FOUND_CODES = {-2011, -2013}  # cancel/query order does not exist
