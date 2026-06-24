@@ -320,25 +320,30 @@ class Bot:
             self.db.set_kv("cooldowns", cooldowns)
 
     # ---------------- liquidation warning ----------------
-    def _check_liquidation_warning(self, symbol, dbp, mark_price):
-        """Warn if price is approaching liquidation price."""
+    def _check_liquidation_warning(self, symbol, dbp, mark_price, exchange_liq_price):
+        """Warn if price is approaching exchange liquidation price.
+        Uses the liquidationPrice reported by Binance positionRisk (most accurate).
+        Falls back to get_liquidation_threshold estimate only if exchange value is missing."""
         try:
             lev = dbp["leverage"]
-            entry = dbp["entry_price"]
             direction = dbp["direction"]
-            liq_threshold_pct = sa.strat.get_liquidation_threshold(lev)
-            if direction == "LONG":
-                liq_price = entry * (1 - liq_threshold_pct / 100)
-                distance_pct = (mark_price - liq_price) / mark_price * 100
+            if exchange_liq_price and exchange_liq_price > 0:
+                liq_price = exchange_liq_price
+                distance_pct = abs(mark_price - liq_price) / mark_price * 100
             else:
-                liq_price = entry * (1 + liq_threshold_pct / 100)
-                distance_pct = (liq_price - mark_price) / mark_price * 100
+                # Fallback: estimate from strategy module
+                liq_threshold_pct = sa.strat.get_liquidation_threshold(lev)
+                entry = dbp["entry_price"]
+                if direction == "LONG":
+                    liq_price = entry * (1 - liq_threshold_pct / 100)
+                else:
+                    liq_price = entry * (1 + liq_threshold_pct / 100)
+                distance_pct = abs(mark_price - liq_price) / mark_price * 100
             if distance_pct <= config.LIQ_WARN_THRESHOLD_PCT and distance_pct > 0:
-                # Only warn once per position (use be_moved flag hack? No, use kv)
                 liq_warned = self.db.get_kv("liq_warned", {})
                 if not liq_warned.get(symbol):
                     log.warning(f"{symbol}: LIQUATION WARNING — mark={mark_price:.6g} "
-                                f"liq~{liq_price:.6g} ({distance_pct:.1f}% away, lev={lev}x)")
+                                f"liq~={liq_price:.6g} ({distance_pct:.1f}% away, lev={lev}x)")
                     tg.notify_liq_warning(symbol, direction, mark_price, liq_price,
                                           distance_pct, lev)
                     liq_warned[symbol] = True
@@ -408,6 +413,10 @@ class Bot:
 
         # configure symbol
         self.client.set_margin_type(symbol, "ISOLATED")
+        max_lev = self.filters.max_leverage(symbol)
+        if lev > max_lev:
+            log.info(f"{symbol}: requested leverage {lev}x capped to exchange max {max_lev}x")
+            lev = max_lev
         self.client.set_leverage(symbol, lev)
 
         side = "BUY" if direction == "LONG" else "SELL"
@@ -497,8 +506,9 @@ class Bot:
                 # Liquidation warning: check if price approaching liq
                 exp = ex_positions[symbol]
                 mark = float(exp.get("markPrice", 0))
+                exchange_liq = float(exp.get("liq", 0) or 0)
                 if mark > 0:
-                    self._check_liquidation_warning(symbol, dbp, mark)
+                    self._check_liquidation_warning(symbol, dbp, mark, exchange_liq)
             except BinanceError as e:
                 log.warning(f"{symbol}: manage failed: {e}")
 

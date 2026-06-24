@@ -1,26 +1,20 @@
-fix: critical safety fixes before going live
+fix: live safety fixes + backtest corrections
 
-1. SSL verification: verify=False only on testnet, verify=True on live
-   (binance_client.py + telegram.py) - prevents MITM on real money API calls
+Live fixes:
+- Liquidation warning now uses exchange liquidationPrice from positionRisk
+  instead of empirical formula; falls back to estimate only when missing
+- Leverage capped to exchange max from exchangeInfo before set_leverage
+  (prevents -4028 / -2027 failures on low-max-leverage symbols)
+- MAX_CONCURRENT_NEUTRAL hard-coded per level to match backtest
+  (lv1=7, lv2=8, lv3=10, lv4=12, lv5=15, lv6=18)
 
-2. Cooldown after 2 consecutive SLs on same symbol (matches backtest logic)
-   - Track consecutive_sls per symbol in DB kv
-   - Skip re-entry for 6 bars (90 min) after 2 SLs
-   - Reset counter on TP hit
-   - Telegram notification when cooldown activates
+Operational:
+- Add emergency_stop.py: 1-click stop all 3 bots + close all positions + cancel orders
 
-3. Liquidation warning: alert when price within 20% of liquidation price
-   - Uses get_liquidation_threshold from strategy module
-   - Telegram notification (once per position)
-   - Prevents silent liquidation when SL might not trigger in time
-
-4. Funding cost tracking: warn when daily funding > 5% of equity
-   - Estimate funding cost on each position close
-   - Track daily cumulative in DB
-   - Telegram notification when threshold exceeded
-
-Also: detect SL vs TP on position close (compare exit price to SL/TP prices)
-      - previously all closes logged as "SL/TP hit" without distinction
+Backtest corrections (for future use):
+- All strategy files: fetch klines from futures API
+  (https://fapi.binance.com/fapi/v1/klines) instead of spot API
+- FEE_PCT raised from 0.01% to 0.02% (taker fee on Binance Futures)
 
 Generated with [Devin](https://devin.ai)
 

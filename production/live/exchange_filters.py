@@ -51,6 +51,7 @@ class ExchangeFilters:
                 "min_notional": min_notional,
                 "qty_prec": int(s.get("quantityPrecision", 8)),
                 "price_prec": int(s.get("pricePrecision", 8)),
+                "max_leverage": int(float(s.get("maxLeverage", 125) or 125)),
             }
         log.info(f"Loaded filters for {len(self.symbols)} symbols")
 
@@ -80,6 +81,10 @@ class ExchangeFilters:
     def min_qty(self, symbol):
         f = self.symbols.get(symbol)
         return f["min_qty"] if f else 0.0
+
+    def max_leverage(self, symbol):
+        f = self.symbols.get(symbol)
+        return f["max_leverage"] if f else 125
 
     def valid_order(self, symbol, qty, price):
         """Check qty/notional meet exchange minimums. Returns (ok, reason)."""

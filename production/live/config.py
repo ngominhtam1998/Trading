@@ -120,11 +120,13 @@ _strat_mod = _il.import_module(STRATEGY_MODULE)
 
 POSITION_PCT = _strat_mod.POSITION_PCT
 MAX_CONCURRENT = _strat_mod.MAX_CONCURRENT
-MAX_CONCURRENT_NEUTRAL = _strat_mod.MAX_CONCURRENT if not hasattr(_strat_mod, "_NEUTRAL_CAP") else _strat_mod._NEUTRAL_CAP
-# Fallback: neutral cap = 70% of MAX_CONCURRENT (matches strategy pattern)
-MAX_CONCURRENT_NEUTRAL = int(MAX_CONCURRENT * 0.7)
 MAX_LEVERAGE = _strat_mod.MAX_LEVERAGE
 MAX_LEVERAGE_NEUTRAL = int(MAX_LEVERAGE * 0.75)
+
+# Neutral concurrent cap: must match backtest hard-coded values per level
+# (backtest sets a fixed cap, not a % of MAX_CONCURRENT)
+_MAX_CONCURRENT_NEUTRAL = {"lv1": 7, "lv2": 8, "lv3": 10, "lv4": 12, "lv5": 15, "lv6": 18}
+MAX_CONCURRENT_NEUTRAL = _MAX_CONCURRENT_NEUTRAL[STRATEGY_LEVEL]
 DAILY_LOSS_LIMIT = _strat_mod.DAILY_LOSS_LIMIT
 MIN_SCORE = _strat_mod.MIN_SCORE
 COINS_UNIVERSE_SIZE = 60     # how many top-volume symbols to scan each cycle

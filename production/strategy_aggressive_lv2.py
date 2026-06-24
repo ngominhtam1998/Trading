@@ -23,7 +23,7 @@ urllib3.disable_warnings()
 
 random.seed(777)
 
-FEE_PCT = 0.01; FUNDING_RATE = 0.0005; FUNDING_INTERVAL_BARS = 16
+FEE_PCT = 0.02; FUNDING_RATE = 0.0005; FUNDING_INTERVAL_BARS = 16
 TOTAL_CAPITAL = 1000.0; MAX_CONCURRENT = 12  # was 10
 POSITION_PCT = 9.0        # was 7.0 — bigger position
 DAILY_LOSS_LIMIT = 7.0    # was 5.0 — accept bigger daily DD
@@ -42,7 +42,7 @@ def get_all_symbols():
 
 def fetch_klines_range(symbol, interval, start_dt, end_dt):
     start_ms = int(start_dt.timestamp() * 1000); end_ms = int(end_dt.timestamp() * 1000)
-    url = "https://api.binance.com/api/v3/klines"
+    url = "https://fapi.binance.com/fapi/v1/klines"
     all_data = []; cur = start_ms
     while cur < end_ms:
         try:
