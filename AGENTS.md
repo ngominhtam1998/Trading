@@ -43,6 +43,12 @@ tail -f /opt/trading/production/live/bot_testnet_lv4.log  # log
 - **Phân tích kỹ yêu cầu user** trước khi làm. Nếu không rõ, hỏi lại. Không tự đoán.
 - Với thay đổi rủi ro (live deploy, đóng positions, xóa dữ liệu), **luôn xác nhận lại** với user.
 
+### Superpowers workflow (cài tại `.devin/skills/`)
+- Trước khi code: **hỏi rõ** → đề xuất 2-3 phương án → trình design → chờ duyệt.
+- Sau khi design duyệt: viết plan với todo list cụ thể, từng bước verify.
+- Mỗi thay đổi code: tự review (logic, lỗi, security, style), chạy test liên quan.
+- Không tuyên bố "xong" khi chưa verify bằng lệnh/test thực tế.
+
 ### Key fixes đã apply
 1. SL atomic swap (place new before cancel old + price validation)
 2. Telegram SSL (verify=False trên testnet, verify=True trên live)
