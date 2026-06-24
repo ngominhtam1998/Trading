@@ -36,12 +36,13 @@ _QUEUE = queue.Queue(maxsize=500)   # bounded; producer never blocks
 _worker = None
 _worker_lock = threading.Lock()
 _session = requests.Session()
-_session.verify = False              # match binance_client (avoid SSL issues on some systems)
+# SSL: ON for live (real money security), OFF for testnet (compat)
+_session_verify = False  # set in _load_config based on MODE
 _SEND_TIMEOUT = 8                    # seconds per HTTP call (worker thread only)
 
 
 def _load_config():
-    global _BOT_TOKEN, _CHAT_IDS, _loaded
+    global _BOT_TOKEN, _CHAT_IDS, _loaded, _session_verify
     if _loaded:
         return
     # Importing config triggers .env auto-loading into os.environ
@@ -55,6 +56,11 @@ def _load_config():
         "lv5": os.environ.get("TELEGRAM_CHAT_LV5", ""),
         "lv6": os.environ.get("TELEGRAM_CHAT_LV6", ""),
     }
+    # SSL verification: ON for live (real money), OFF for testnet
+    _session_verify = config.MODE == "live"
+    _session.verify = _session_verify
+    if not _session_verify:
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     _loaded = True
 
 
@@ -93,7 +99,7 @@ def _deliver(chat_id, text, parse_mode):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode,
                "disable_web_page_preview": True}
     try:
-        r = _session.post(url, json=payload, timeout=_SEND_TIMEOUT)
+        r = _session.post(url, json=payload, timeout=_SEND_TIMEOUT, verify=_session_verify)
         if r.status_code != 200:
             log.warning(f"Telegram send failed: {r.status_code} {r.text[:200]}")
         else:
@@ -269,3 +275,35 @@ def notify_shutdown(level, reason="manual"):
     ok = send(msg)
     flush(3)  # give worker a moment to deliver the final message
     return ok
+
+
+def notify_cooldown(symbol, consec_sls, cooldown_bars):
+    """Notification when a symbol enters cooldown after consecutive SLs."""
+    mins = cooldown_bars * 15  # 15m bars
+    msg = (f"⏸️ <b>COOLDOWN</b> — {symbol}\n"
+           f"├ SL liên tiếp: <b>{consec_sls}</b>\n"
+           f"├ Bỏ qua entry <b>{mins} phút</b>\n"
+           f"└ Tránh vào lại cùng coin khi đang thua")
+    return send(msg)
+
+
+def notify_liq_warning(symbol, direction, mark_price, liq_price, distance_pct, leverage):
+    """Warning when price is approaching liquidation price."""
+    msg = (f"🚨 <b>CẢNH BÁO LIQUIDATION</b> — {symbol}\n"
+           f"├ Hướng: <b>{direction}</b>  |  Đòn bẩy: <b>{leverage}x</b>\n"
+           f"├ Giá hiện tại: <b>{mark_price:.6g}</b>\n"
+           f"├ Giá liquidation: <b>{liq_price:.6g}</b>\n"
+           f"├ Cách liq: <b>{distance_pct:.1f}%</b>\n"
+           f"└ SL có thể không kịp trigger!")
+    return send(msg)
+
+
+def notify_funding_warning(total_funding, equity, threshold_pct):
+    """Warning when daily funding cost exceeds threshold."""
+    pct = total_funding / equity * 100 if equity > 0 else 0
+    msg = (f"💸 <b>CẢNH BÁO FUNDING</b>\n"
+           f"├ Funding hôm nay: <b>{_fmt_money(total_funding)}</b>\n"
+           f"├ Equity: <b>{_fmt_money(equity)}</b>\n"
+           f"├ Tỷ lệ: <b>{pct:.1f}%</b> (ngưỡng {threshold_pct}%)\n"
+           f"└ Funding đang ăn mòn lợi nhuận")
+    return send(msg)

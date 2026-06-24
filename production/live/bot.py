@@ -286,6 +286,103 @@ class Bot:
             return True
         return False
 
+    # ---------------- cooldown (consecutive SL tracking) ----------------
+    def _is_in_cooldown(self, symbol):
+        """Check if a symbol is in cooldown (skip re-entry after consecutive SLs)."""
+        cooldowns = self.db.get_kv("cooldowns", {})
+        entry = cooldowns.get(symbol)
+        if not entry:
+            return False
+        cooldown_until = entry.get("cooldown_until", 0)
+        if cooldown_until and time.time() * 1000 < cooldown_until:
+            return True
+        return False
+
+    def _record_sl_close(self, symbol):
+        """Record a SL hit on a symbol; trigger cooldown if threshold reached."""
+        cooldowns = self.db.get_kv("cooldowns", {})
+        entry = cooldowns.get(symbol, {"consecutive_sls": 0, "cooldown_until": 0})
+        entry["consecutive_sls"] = entry.get("consecutive_sls", 0) + 1
+        if entry["consecutive_sls"] >= config.COOLDOWN_CONSEC_SL_THRESHOLD:
+            cooldown_ms = config.COOLDOWN_BARS * config.BAR_SECONDS * 1000
+            entry["cooldown_until"] = int(time.time() * 1000) + cooldown_ms
+            log.warning(f"{symbol}: cooldown activated ({entry['consecutive_sls']} consecutive SLs, "
+                        f"{config.COOLDOWN_BARS} bars)")
+            tg.notify_cooldown(symbol, entry["consecutive_sls"], config.COOLDOWN_BARS)
+        cooldowns[symbol] = entry
+        self.db.set_kv("cooldowns", cooldowns)
+
+    def _reset_cooldown(self, symbol):
+        """Reset consecutive SL counter (e.g. after a TP or successful exit)."""
+        cooldowns = self.db.get_kv("cooldowns", {})
+        if symbol in cooldowns:
+            cooldowns[symbol] = {"consecutive_sls": 0, "cooldown_until": 0}
+            self.db.set_kv("cooldowns", cooldowns)
+
+    # ---------------- liquidation warning ----------------
+    def _check_liquidation_warning(self, symbol, dbp, mark_price):
+        """Warn if price is approaching liquidation price."""
+        try:
+            lev = dbp["leverage"]
+            entry = dbp["entry_price"]
+            direction = dbp["direction"]
+            liq_threshold_pct = sa.strat.get_liquidation_threshold(lev)
+            if direction == "LONG":
+                liq_price = entry * (1 - liq_threshold_pct / 100)
+                distance_pct = (mark_price - liq_price) / mark_price * 100
+            else:
+                liq_price = entry * (1 + liq_threshold_pct / 100)
+                distance_pct = (liq_price - mark_price) / mark_price * 100
+            if distance_pct <= config.LIQ_WARN_THRESHOLD_PCT and distance_pct > 0:
+                # Only warn once per position (use be_moved flag hack? No, use kv)
+                liq_warned = self.db.get_kv("liq_warned", {})
+                if not liq_warned.get(symbol):
+                    log.warning(f"{symbol}: LIQUATION WARNING — mark={mark_price:.6g} "
+                                f"liq~{liq_price:.6g} ({distance_pct:.1f}% away, lev={lev}x)")
+                    tg.notify_liq_warning(symbol, direction, mark_price, liq_price,
+                                          distance_pct, lev)
+                    liq_warned[symbol] = True
+                    self.db.set_kv("liq_warned", liq_warned)
+        except Exception as e:
+            log.debug(f"{symbol}: liq warning check failed: {e}")
+
+    # ---------------- funding cost tracking ----------------
+    def _track_funding_cost(self, symbol, dbp, exit_price):
+        """Estimate funding cost for a closed position and track daily total."""
+        try:
+            bars_held = (time.time() * 1000 - dbp["entry_time"]) / 1000 / config.BAR_SECONDS
+            funding_intervals = int(bars_held // 16)  # 16 bars = 8h funding interval
+            if funding_intervals <= 0:
+                return 0.0
+            # Use strategy module's FUNDING_RATE (0.0005 = 0.05%)
+            fr = getattr(sa.strat, "FUNDING_RATE", 0.0005) / 100  # convert to decimal
+            notional = dbp["qty"] * dbp["entry_price"]
+            funding_cost = notional * fr * funding_intervals
+            # Track daily total
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            funding_state = self.db.get_kv("funding_daily", {})
+            if funding_state.get("date") != today:
+                funding_state = {"date": today, "total": 0.0, "warned": False}
+            funding_state["total"] = funding_state.get("total", 0.0) + funding_cost
+            self.db.set_kv("funding_daily", funding_state)
+            return funding_cost
+        except Exception as e:
+            log.debug(f"{symbol}: funding tracking failed: {e}")
+            return 0.0
+
+    def _check_funding_warning(self, equity):
+        """Warn if daily funding cost exceeds threshold % of equity."""
+        funding_state = self.db.get_kv("funding_daily", {})
+        if not funding_state or funding_state.get("warned"):
+            return
+        total = funding_state.get("total", 0.0)
+        if equity > 0 and total > equity * config.FUNDING_DAILY_WARN_PCT / 100:
+            log.warning(f"Funding cost warning: ${total:.2f} today "
+                        f"({total/equity*100:.1f}% of equity ${equity:.2f})")
+            tg.notify_funding_warning(total, equity, config.FUNDING_DAILY_WARN_PCT)
+            funding_state["warned"] = True
+            self.db.set_kv("funding_daily", funding_state)
+
     # ---------------- entry ----------------
     def try_enter(self, symbol, opp, equity):
         """Open a position for `symbol` based on decision `opp`."""
@@ -365,15 +462,43 @@ class Bot:
                 log.info(f"{symbol}: no longer on exchange -> closed (SL/TP hit)")
                 self.cancel_protection(symbol)
                 pnl, exit_px, _ = self._realized(symbol, dbp)
-                self.db.record_closed(symbol, dbp["direction"], dbp["entry_price"],
+                # Determine if SL or TP hit by comparing exit price to SL/TP prices
+                sl_price = dbp.get("sl_price", 0)
+                tp_price = dbp.get("tp_price", 0)
+                direction = dbp.get("direction", "LONG")
+                is_sl = False
+                if exit_px and sl_price and tp_price:
+                    if direction == "LONG":
+                        is_sl = exit_px <= sl_price * 1.002  # within 0.2% of SL
+                    else:
+                        is_sl = exit_px >= sl_price * 0.998
+                reason = "SL hit" if is_sl else "TP hit"
+                self.db.record_closed(symbol, direction, dbp["entry_price"],
                                       exit_px or 0, dbp["qty"], pnl or 0.0,
-                                      "sl_tp_hit", dbp["entry_time"])
+                                      reason, dbp["entry_time"])
                 self.db.delete_position(symbol)
-                self.db.log_event("exit", symbol, {"reason": "SL/TP hit", "pnl": pnl})
-                self._notify_exit(symbol, dbp, "SL/TP hit", pnl, exit_px)
+                self.db.log_event("exit", symbol, {"reason": reason, "pnl": pnl})
+                self._notify_exit(symbol, dbp, reason, pnl, exit_px)
+                # Cooldown tracking: SL → increment, TP → reset
+                if is_sl:
+                    self._record_sl_close(symbol)
+                else:
+                    self._reset_cooldown(symbol)
+                # Funding cost tracking
+                self._track_funding_cost(symbol, dbp, exit_px or 0)
+                # Clear liq warning flag
+                liq_warned = self.db.get_kv("liq_warned", {})
+                if symbol in liq_warned:
+                    del liq_warned[symbol]
+                    self.db.set_kv("liq_warned", liq_warned)
                 continue
             try:
                 self._update_stops(symbol, dbp)
+                # Liquidation warning: check if price approaching liq
+                exp = ex_positions[symbol]
+                mark = float(exp.get("markPrice", 0))
+                if mark > 0:
+                    self._check_liquidation_warning(symbol, dbp, mark)
             except BinanceError as e:
                 log.warning(f"{symbol}: manage failed: {e}")
 
@@ -390,6 +515,12 @@ class Bot:
                                   "max_hold", dbp["entry_time"])
             self.db.delete_position(symbol)
             self._notify_exit(symbol, dbp, "max_hold", pnl, exit_px)
+            self._track_funding_cost(symbol, dbp, exit_px or 0)
+            # Clear liq warning flag
+            liq_warned = self.db.get_kv("liq_warned", {})
+            if symbol in liq_warned:
+                del liq_warned[symbol]
+                self.db.set_kv("liq_warned", liq_warned)
             return
 
         # use last closed 15m bar high/low for favorable excursion (matches backtest)
@@ -502,6 +633,9 @@ class Bot:
         for symbol in universe:
             if symbol in ex_positions:
                 continue
+            if self._is_in_cooldown(symbol):
+                log.info(f"{symbol}: in cooldown, skip entry")
+                continue
             opp = sa.analyze_symbol(self.client, symbol, self.btc_regime)
             if opp:
                 opportunities.append({"symbol": symbol, **opp})
@@ -545,6 +679,9 @@ class Bot:
 
                 # always manage existing positions first (safety)
                 self.manage_positions(ex_positions)
+
+                # check funding cost warning (daily cumulative)
+                self._check_funding_warning(equity)
 
                 # entries only on decision bar + not halted
                 halted = self.check_daily_halt(equity)

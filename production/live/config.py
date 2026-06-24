@@ -152,6 +152,16 @@ KLINES_LOOKBACK = 260        # bars to fetch for indicators (EMA200 needs >200)
 ORPHAN_ACTION = "adopt"      # adopt | close | pause  (user chose: adopt + place SL)
 ORPHAN_SL_PCT = 1.5          # emergency SL % for adopted positions if none exists
 
+# === COOLDOWN (match backtest: skip re-entry after consecutive SLs) ===
+COOLDOWN_CONSEC_SL_THRESHOLD = 2   # trigger cooldown after N consecutive SLs on same symbol
+COOLDOWN_BARS = 6                  # cooldown duration in bars (6 × 15m = 90 min)
+
+# === LIQUIDATION WARNING ===
+LIQ_WARN_THRESHOLD_PCT = 20.0  # warn when price is within X% of liquidation price
+
+# === FUNDING COST TRACKING ===
+FUNDING_DAILY_WARN_PCT = 5.0   # warn when daily funding cost exceeds X% of equity
+
 # === ROBUSTNESS ===
 MAX_RETRIES = 5              # retries per REST call
 RETRY_BACKOFF_BASE = 1.5     # exponential backoff base (seconds)

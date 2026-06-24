@@ -59,13 +59,17 @@ class BinanceClient:
         self.key, self.secret = config.get_api_keys()
         self.session = requests.Session()
         self.session.headers.update({"X-MBX-APIKEY": self.key})
+        # SSL verification: ON for live (real money), OFF for testnet (self-signed certs)
+        self._verify_ssl = config.MODE == "live"
+        if not self._verify_ssl:
+            urllib3.disable_warnings()
         self.time_offset = 0  # serverTime - localTime (ms)
         self._sync_time()
 
     # ---------------- low level ----------------
     def _sync_time(self):
         try:
-            r = self.session.get(f"{self.base}/fapi/v1/time", timeout=10, verify=False)
+            r = self.session.get(f"{self.base}/fapi/v1/time", timeout=10, verify=self._verify_ssl)
             server = r.json()["serverTime"]
             self.time_offset = server - int(time.time() * 1000)
             log.info(f"Time synced, offset={self.time_offset}ms")
@@ -94,10 +98,10 @@ class BinanceClient:
                     params["timestamp"] = self._ts()
                     params["recvWindow"] = config.RECV_WINDOW
                     url = f"{self.base}{path}?{self._sign(params)}"
-                    r = self.session.request(method, url, timeout=15, verify=False)
+                    r = self.session.request(method, url, timeout=15, verify=self._verify_ssl)
                 else:
                     url = f"{self.base}{path}"
-                    r = self.session.request(method, url, params=params, timeout=15, verify=False)
+                    r = self.session.request(method, url, params=params, timeout=15, verify=self._verify_ssl)
 
                 # Rate limit / ban
                 if r.status_code in (429, 418):
