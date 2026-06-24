@@ -41,6 +41,10 @@ PERMANENT_CODES = {
     -2021,                              # order would immediately trigger
     -4003, -4164,                      # qty/notional too small
     -4131,                             # PERCENT_PRICE filter
+    -4120,                             # order type must use Algo Order API (don't retry)
+    -4005,                             # qty greater than max
+    -4046,                             # margin type already set (no need to change) - benign
+    -4045,                             # leverage not changed (already at target) - benign
 }
 # Codes that mean "the thing isn't there" -- treat as success-ish for idempotency
 NOT_FOUND_CODES = {-2011, -2013}  # cancel/query order does not exist
@@ -192,6 +196,36 @@ class BinanceClient:
         params = {"symbol": symbol} if symbol else {}
         return self._request("GET", "/fapi/v1/openOrders", params, signed=True)
 
+    def user_trades(self, symbol, start_time=None, limit=50):
+        """Recent account trades for a symbol. Used to compute realized PnL
+        and exit price after a position closes."""
+        params = {"symbol": symbol, "limit": limit}
+        if start_time:
+            params["startTime"] = int(start_time)
+        try:
+            return self._request("GET", "/fapi/v1/userTrades", params, signed=True)
+        except BinanceError as e:
+            log.warning(f"user_trades {symbol} failed: {e}")
+            return []
+
+    def realized_pnl_since(self, symbol, entry_time):
+        """Return (realized_pnl, exit_price, total_qty) for trades on `symbol`
+        since entry_time (ms). realized_pnl includes commission. Best-effort:
+        returns (None, None, None) if data unavailable."""
+        trades = self.user_trades(symbol, start_time=entry_time, limit=100)
+        if not trades:
+            return None, None, None
+        pnl = 0.0
+        last_price = None
+        closed_qty = 0.0
+        for t in trades:
+            pnl += float(t.get("realizedPnl", 0) or 0) - float(t.get("commission", 0) or 0)
+            rp = float(t.get("realizedPnl", 0) or 0)
+            if rp != 0:  # a closing fill
+                last_price = float(t.get("price", 0) or 0)
+                closed_qty += float(t.get("qty", 0) or 0)
+        return pnl, last_price, (closed_qty or None)
+
     # ---------------- trading ----------------
     def set_leverage(self, symbol, leverage):
         try:
@@ -222,37 +256,85 @@ class BinanceClient:
             params["newClientOrderId"] = client_id
         return self._request("POST", "/fapi/v1/order", params, signed=True)
 
-    def new_stop_market(self, symbol, side, stop_price, client_id=None, close_position=True, qty=None):
-        """STOP_MARKET reduce-only order (stop loss)."""
+    # --- conditional (SL/TP) orders MUST use the Algo Order API since 2025-12-09 ---
+    # The old /fapi/v1/order endpoint rejects STOP_MARKET/TAKE_PROFIT_MARKET with
+    # error -4120 ("use the Algo Order API endpoints instead").
+    def new_algo_order(self, symbol, side, order_type, trigger_price,
+                       client_id=None, close_position=True, qty=None,
+                       working_type="MARK_PRICE", price_protect=False):
+        """Place a CONDITIONAL algo order (STOP_MARKET / TAKE_PROFIT_MARKET).
+        Returns the response dict (contains algoId, clientAlgoId)."""
         params = {
-            "symbol": symbol, "side": side, "type": "STOP_MARKET",
-            "stopPrice": stop_price, "workingType": "MARK_PRICE",
+            "algoType": "CONDITIONAL", "symbol": symbol, "side": side,
+            "type": order_type, "triggerPrice": trigger_price,
+            "workingType": working_type,
         }
         if close_position:
             params["closePosition"] = "true"
         else:
             params["quantity"] = qty
             params["reduceOnly"] = "true"
+        if price_protect:
+            params["priceProtect"] = "true"
         if client_id:
-            params["newClientOrderId"] = client_id
-        return self._request("POST", "/fapi/v1/order", params, signed=True)
+            params["clientAlgoId"] = client_id
+        return self._request("POST", "/fapi/v1/algoOrder", params, signed=True)
+
+    def new_stop_market(self, symbol, side, stop_price, client_id=None, close_position=True, qty=None):
+        """STOP_MARKET (stop loss) — placed via Algo Order API."""
+        return self.new_algo_order(symbol, side, "STOP_MARKET", stop_price,
+                                   client_id=client_id, close_position=close_position, qty=qty)
 
     def new_take_profit_market(self, symbol, side, stop_price, client_id=None, close_position=True, qty=None):
-        """TAKE_PROFIT_MARKET reduce-only order (take profit)."""
-        params = {
-            "symbol": symbol, "side": side, "type": "TAKE_PROFIT_MARKET",
-            "stopPrice": stop_price, "workingType": "MARK_PRICE",
-        }
-        if close_position:
-            params["closePosition"] = "true"
+        """TAKE_PROFIT_MARKET (take profit) — placed via Algo Order API."""
+        return self.new_algo_order(symbol, side, "TAKE_PROFIT_MARKET", stop_price,
+                                   client_id=client_id, close_position=close_position, qty=qty)
+
+    def open_algo_orders(self, symbol=None):
+        """Open algo (conditional) orders. Normalizes each entry so callers can
+        use o['type'] (STOP_MARKET/TAKE_PROFIT_MARKET), o['clientOrderId'],
+        o['orderId'] just like regular orders."""
+        params = {}
+        if symbol:
+            params["symbol"] = symbol
+        try:
+            data = self._request("GET", "/fapi/v1/openAlgoOrders", params, signed=True)
+        except BinanceError as e:
+            log.warning(f"open_algo_orders failed: {e}")
+            return []
+        out = []
+        for o in data or []:
+            out.append({
+                "symbol": o.get("symbol"),
+                "type": o.get("orderType") or o.get("type"),
+                "orderId": o.get("algoId"),
+                "clientOrderId": o.get("clientAlgoId", ""),
+                "algoId": o.get("algoId"),
+                "clientAlgoId": o.get("clientAlgoId", ""),
+                "status": o.get("algoStatus"),
+            })
+        return out
+
+    def cancel_algo_order(self, symbol=None, algo_id=None, client_id=None):
+        """Cancel a single algo order by algoId or clientAlgoId."""
+        params = {}
+        if algo_id:
+            params["algoId"] = algo_id
+        elif client_id:
+            params["clientAlgoId"] = client_id
         else:
-            params["quantity"] = qty
-            params["reduceOnly"] = "true"
-        if client_id:
-            params["newClientOrderId"] = client_id
-        return self._request("POST", "/fapi/v1/order", params, signed=True)
+            return None
+        try:
+            return self._request("DELETE", "/fapi/v1/algoOrder", params, signed=True)
+        except BinanceError as e:
+            if e.code in NOT_FOUND_CODES:
+                return None  # already gone, fine
+            log.warning(f"cancel_algo_order {symbol} failed: {e}")
+            return None
 
     def cancel_order(self, symbol, order_id=None, client_id=None):
+        """Cancel a regular order. (Protective SL/TP are algo orders — use
+        cancel_algo_order for those.)"""
         params = {"symbol": symbol}
         if order_id:
             params["orderId"] = order_id
@@ -266,11 +348,15 @@ class BinanceClient:
             raise
 
     def cancel_all_orders(self, symbol):
+        """Cancel all regular AND algo open orders for a symbol."""
         try:
-            return self._request("DELETE", "/fapi/v1/allOpenOrders", {"symbol": symbol}, signed=True)
+            self._request("DELETE", "/fapi/v1/allOpenOrders", {"symbol": symbol}, signed=True)
         except BinanceError as e:
             log.warning(f"cancel_all {symbol}: {e}")
-            return None
+        # also cancel algo orders
+        for o in self.open_algo_orders(symbol):
+            self.cancel_algo_order(symbol, algo_id=o.get("algoId"))
+        return None
 
     # ---------------- user data stream (listenKey) ----------------
     def create_listen_key(self):

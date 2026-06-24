@@ -26,6 +26,7 @@ from .binance_client import BinanceClient, BinanceError
 from .state_db import StateDB
 from .exchange_filters import ExchangeFilters
 from . import strategy_adapter as sa
+from . import telegram as tg
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,12 +51,13 @@ signal.signal(signal.SIGTERM, _stop)
 
 class Bot:
     def __init__(self):
-        log.info(f"=== Starting bot in MODE={config.MODE} ===")
+        log.info(f"=== Starting bot in MODE={config.MODE} STRATEGY={config.STRATEGY_LEVEL} ===")
         self.client = BinanceClient()
         self.db = StateDB(config.STATE_DB_PATH)
         self.filters = ExchangeFilters(self.client)
         self.btc_regime = "neutral"
         self.last_decision_bar = None
+        self._startup_notified = False
 
     # ---------------- helpers ----------------
     def _cid(self, symbol, kind):
@@ -98,19 +100,27 @@ class Bot:
         return sl_cid, tp_cid
 
     def cancel_protection(self, symbol):
-        """Cancel all of OUR open orders for a symbol."""
+        """Cancel all of OUR protective (algo SL/TP) orders for a symbol.
+        Also clears any regular orders we may have placed (defensive)."""
         try:
-            orders = self.client.open_orders(symbol)
-            for o in orders:
+            for o in self.client.open_algo_orders(symbol):
+                if self._is_our_order(o):
+                    self.client.cancel_algo_order(symbol, algo_id=o.get("algoId"),
+                                                  client_id=o.get("clientAlgoId"))
+        except BinanceError as e:
+            log.warning(f"cancel_protection (algo) {symbol}: {e}")
+        try:
+            for o in self.client.open_orders(symbol):
                 if self._is_our_order(o):
                     self.client.cancel_order(symbol, order_id=o["orderId"])
         except BinanceError as e:
-            log.warning(f"cancel_protection {symbol}: {e}")
+            log.warning(f"cancel_protection (regular) {symbol}: {e}")
 
     def has_open_order_type(self, symbol, otype):
+        """True if an OUR algo order of the given type (STOP_MARKET/TAKE_PROFIT_MARKET)
+        exists for the symbol."""
         try:
-            orders = self.client.open_orders(symbol)
-            return any(o["type"] == otype for o in orders)
+            return any(o["type"] == otype for o in self.client.open_algo_orders(symbol))
         except BinanceError:
             return False
 
@@ -131,10 +141,13 @@ class Bot:
                 dbp = db_positions[symbol]
                 log.warning(f"{symbol}: in DB but no exchange position -> closed while down")
                 self.cancel_protection(symbol)
-                self.db.record_closed(symbol, dbp["direction"], dbp["entry_price"], 0,
-                                      dbp["qty"], 0.0, "closed_while_down", dbp["entry_time"])
+                pnl, exit_px, _ = self._realized(symbol, dbp)
+                self.db.record_closed(symbol, dbp["direction"], dbp["entry_price"],
+                                      exit_px or 0, dbp["qty"], pnl or 0.0,
+                                      "closed_while_down", dbp["entry_time"])
                 self.db.delete_position(symbol)
-                self.db.log_event("recover_closed", symbol, "position gone, cleaned up")
+                self.db.log_event("recover_closed", symbol, {"reason": "closed_while_down", "pnl": pnl})
+                self._notify_exit(symbol, dbp, "closed_while_down", pnl, exit_px)
 
         # 2) positions on exchange
         for symbol, exp in ex_positions.items():
@@ -146,9 +159,13 @@ class Bot:
                 # ORPHAN -> adopt per user choice
                 self._adopt_orphan(symbol, exp)
 
-        # 3) dangling orders for symbols with no position
+        # 3) dangling orders for symbols with no position (check BOTH algo + regular)
         try:
-            all_orders = self.client.open_orders()
+            all_orders = self.client.open_algo_orders()
+            try:
+                all_orders = all_orders + self.client.open_orders()
+            except BinanceError:
+                pass
             sym_no_pos = set(o["symbol"] for o in all_orders) - set(ex_positions)
             for symbol in sym_no_pos:
                 log.warning(f"{symbol}: open orders but no position -> cancelling dangling")
@@ -161,9 +178,9 @@ class Bot:
     def _ensure_protection(self, symbol, dbp, exp):
         """Make sure a known position still has SL/TP on the exchange."""
         try:
-            orders = self.client.open_orders(symbol)
+            orders = self.client.open_algo_orders(symbol)
         except BinanceError as e:
-            log.warning(f"{symbol}: cannot list orders during recovery: {e}")
+            log.warning(f"{symbol}: cannot list algo orders during recovery: {e}")
             orders = []
         has_sl = any(o["type"] == "STOP_MARKET" for o in orders)
         has_tp = any(o["type"] == "TAKE_PROFIT_MARKET" for o in orders)
@@ -180,6 +197,7 @@ class Bot:
             self.db.log_event("recover_protection", symbol, "re-placed SL/TP")
         except BinanceError as e:
             log.critical(f"{symbol}: FAILED to restore protection: {e}")
+            tg.notify_error(symbol, f"recovery: cannot restore SL/TP: {e}")
 
     def _adopt_orphan(self, symbol, exp):
         """Adopt an orphan position: place emergency SL, register in DB."""
@@ -211,6 +229,35 @@ class Bot:
             "adopted": 1,
         })
         self.db.log_event("adopt_orphan", symbol, {"entry": entry, "sl": sl_price})
+
+    def _realized(self, symbol, dbp):
+        """Best-effort realized PnL + exit price after a close. Never raises."""
+        try:
+            return self.client.realized_pnl_since(symbol, dbp.get("entry_time"))
+        except Exception as e:
+            log.debug(f"{symbol}: realized PnL fetch failed (ignored): {e}")
+            return None, None, None
+
+    def _notify_exit(self, symbol, dbp, reason, pnl, exit_px):
+        """Build a detailed exit notification. Never raises / never blocks."""
+        try:
+            entry = dbp.get("entry_price")
+            qty = dbp.get("qty")
+            margin = dbp.get("margin")
+            hold_s = None
+            if dbp.get("entry_time"):
+                hold_s = max(0, time.time() - dbp["entry_time"] / 1000)
+            pnl_pct = None
+            if entry and exit_px:
+                if dbp.get("direction") == "LONG":
+                    pnl_pct = (exit_px - entry) / entry * 100
+                else:
+                    pnl_pct = (entry - exit_px) / entry * 100
+            tg.notify_exit(symbol, dbp.get("direction"), reason, pnl=pnl, pnl_pct=pnl_pct,
+                           entry_price=entry, exit_price=exit_px, qty=qty,
+                           hold_seconds=hold_s, margin=margin)
+        except Exception as e:
+            log.debug(f"{symbol}: exit noti build failed (ignored): {e}")
 
     def _market_close(self, symbol, direction, qty, reason):
         close_side = "SELL" if direction == "LONG" else "BUY"
@@ -285,6 +332,7 @@ class Bot:
             sl_cid, tp_cid = self.place_protection(symbol, direction, sl_price, tp_price)
         except BinanceError as e:
             log.critical(f"{symbol}: ENTRY FILLED but SL FAILED -> closing position now: {e}")
+            tg.notify_error(symbol, f"ENTRY filled but SL failed: {e}")
             self._market_close(symbol, direction, qty, "sl_place_failed")
             return False
 
@@ -301,6 +349,9 @@ class Bot:
                            "sl": sl_price, "tp": tp_price, "score": opp["score"]})
         log.info(f"ENTER {symbol} {direction} qty={qty} @ {fill} lev={lev}x "
                  f"SL={sl_price:.6g} TP={tp_price:.6g} score={opp['score']}")
+        tg.notify_entry(symbol, direction, qty, fill, lev, opp["sl"], opp["tp"], opp["score"],
+                        margin=margin, notional=qty * fill, sl_price=sl_price, tp_price=tp_price,
+                        entry_time=int(time.time() * 1000))
         return True
 
     # ---------------- manage open positions (BE / trail / max-hold) ----------------
@@ -311,10 +362,13 @@ class Bot:
                 # closed (hit SL/TP) since last cycle
                 log.info(f"{symbol}: no longer on exchange -> closed (SL/TP hit)")
                 self.cancel_protection(symbol)
-                self.db.record_closed(symbol, dbp["direction"], dbp["entry_price"], 0,
-                                      dbp["qty"], 0.0, "sl_tp_hit", dbp["entry_time"])
+                pnl, exit_px, _ = self._realized(symbol, dbp)
+                self.db.record_closed(symbol, dbp["direction"], dbp["entry_price"],
+                                      exit_px or 0, dbp["qty"], pnl or 0.0,
+                                      "sl_tp_hit", dbp["entry_time"])
                 self.db.delete_position(symbol)
-                self.db.log_event("exit", symbol, "SL/TP hit")
+                self.db.log_event("exit", symbol, {"reason": "SL/TP hit", "pnl": pnl})
+                self._notify_exit(symbol, dbp, "SL/TP hit", pnl, exit_px)
                 continue
             try:
                 self._update_stops(symbol, dbp)
@@ -328,9 +382,12 @@ class Bot:
         if age_ms >= config.MAX_HOLD_BARS * config.BAR_SECONDS * 1000:
             log.info(f"{symbol}: max hold reached -> closing")
             self._market_close(symbol, dbp["direction"], dbp["qty"], "max_hold")
-            self.db.record_closed(symbol, dbp["direction"], dbp["entry_price"], 0,
-                                  dbp["qty"], 0.0, "max_hold", dbp["entry_time"])
+            pnl, exit_px, _ = self._realized(symbol, dbp)
+            self.db.record_closed(symbol, dbp["direction"], dbp["entry_price"],
+                                  exit_px or 0, dbp["qty"], pnl or 0.0,
+                                  "max_hold", dbp["entry_time"])
             self.db.delete_position(symbol)
+            self._notify_exit(symbol, dbp, "max_hold", pnl, exit_px)
             return
 
         # use last closed 15m bar high/low for favorable excursion (matches backtest)
@@ -348,25 +405,25 @@ class Bot:
         if direction == "LONG":
             profit_pct = (bar["high"] - entry) / entry * 100
             new_sl = None
-            if profit_pct >= 1.2 * orig_sl and not trail_moved:
+            if profit_pct >= config.TRAIL_R_MULTIPLE * orig_sl and not trail_moved:
                 new_sl = entry * (1 + orig_sl / 100); trail_moved = True; be_moved = True
-            elif profit_pct >= 0.5 * orig_sl and not be_moved:
+            elif profit_pct >= config.BE_R_MULTIPLE * orig_sl and not be_moved:
                 new_sl = entry * (1 + 0.01)
                 be_moved = True
         else:
             profit_pct = (entry - bar["low"]) / entry * 100
             new_sl = None
-            if profit_pct >= 1.2 * orig_sl and not trail_moved:
+            if profit_pct >= config.TRAIL_R_MULTIPLE * orig_sl and not trail_moved:
                 new_sl = entry * (1 - orig_sl / 100); trail_moved = True; be_moved = True
-            elif profit_pct >= 0.5 * orig_sl and not be_moved:
+            elif profit_pct >= config.BE_R_MULTIPLE * orig_sl and not be_moved:
                 new_sl = entry * (1 - 0.01)
                 be_moved = True
 
         if new_sl is not None:
             new_sl = self.filters.round_price(symbol, new_sl)
-            # replace SL order
+            # replace SL order (algo)
             if dbp.get("sl_client_id"):
-                self.client.cancel_order(symbol, client_id=dbp["sl_client_id"])
+                self.client.cancel_algo_order(symbol, client_id=dbp["sl_client_id"])
             close_side = "SELL" if direction == "LONG" else "BUY"
             sl_cid = self._cid(symbol, "sl")
             try:
@@ -377,6 +434,7 @@ class Bot:
                 kind = "trail" if trail_moved else "breakeven"
                 log.info(f"{symbol}: SL moved to {new_sl:.6g} ({kind})")
                 self.db.log_event("move_sl", symbol, {"sl": new_sl, "kind": kind})
+                tg.notify_sl_move(symbol, new_sl, kind)
             except BinanceError as e:
                 log.warning(f"{symbol}: failed to move SL, re-placing original: {e}")
                 # ensure we still have protection
@@ -385,7 +443,7 @@ class Bot:
                                                 client_id=self._cid(symbol, "sl"), close_position=True)
 
     # ---------------- entry scan ----------------
-    def scan_entries(self, ex_positions, equity):
+    def scan_entries(self, ex_positions, equity, avail):
         open_count = len(ex_positions)
         max_conc = (config.MAX_CONCURRENT_NEUTRAL if self.btc_regime == "neutral"
                     else config.MAX_CONCURRENT)
@@ -393,6 +451,11 @@ class Bot:
         if slots <= 0:
             log.info(f"No free slots ({open_count}/{max_conc}), regime={self.btc_regime}")
             return
+        # Per-position margin = equity * POSITION_PCT% (matches backtest).
+        # Stop opening once available balance can't cover the next margin.
+        margin_per_pos = equity * config.POSITION_PCT / 100.0
+        # Reserve a small buffer for fees + maintenance margin on existing positions
+        avail_budget = avail * 0.95
 
         # universe = top volume USDT perps
         try:
@@ -415,12 +478,21 @@ class Bot:
             if not RUNNING:
                 return
         opportunities.sort(key=lambda x: -x["score"])
-        log.info(f"{len(opportunities)} opportunities, {slots} slots, regime={self.btc_regime}")
+        log.info(f"{len(opportunities)} opportunities, {slots} slots, "
+                 f"regime={self.btc_regime}, avail={avail:.2f}, margin/pos={margin_per_pos:.2f}")
 
+        opened = 0
         for opp in opportunities[:slots]:
             if not RUNNING:
                 return
-            self.try_enter(opp["symbol"], opp, equity)
+            # Backtest-equivalent guard: skip if not enough available margin
+            if avail_budget < margin_per_pos:
+                log.info(f"Insufficient available margin ({avail_budget:.2f} < {margin_per_pos:.2f}) "
+                         f"for more entries; opened {opened}/{slots}")
+                break
+            if self.try_enter(opp["symbol"], opp, equity):
+                opened += 1
+                avail_budget -= margin_per_pos  # deduct committed margin
 
     # ---------------- main loop ----------------
     def run(self):
@@ -436,6 +508,11 @@ class Bot:
                     log.warning("equity unavailable, skipping cycle")
                     time.sleep(10); continue
 
+                # Send startup notification once equity is available
+                if not self._startup_notified:
+                    tg.notify_startup(config.STRATEGY_LEVEL, config.MODE, equity)
+                    self._startup_notified = True
+
                 # always manage existing positions first (safety)
                 self.manage_positions(ex_positions)
 
@@ -443,8 +520,13 @@ class Bot:
                 halted = self.check_daily_halt(equity)
                 if halted:
                     log.info(f"DAILY HALT active (equity={equity:.2f}); managing only")
+                    state = self.db.get_kv("daily", {})
+                    if not state.get("halt_notified"):
+                        tg.notify_daily_halt(equity, state.get("start_equity", equity))
+                        state["halt_notified"] = True
+                        self.db.set_kv("daily", state)
                 else:
-                    self.scan_entries(ex_positions, equity)
+                    self.scan_entries(ex_positions, equity, avail)
 
                 # listenKey keepalive every 30 min (kept for future WS use)
                 if time.time() - listen_key_ts > 1800:
@@ -455,12 +537,15 @@ class Bot:
                          f"open={len(ex_positions)} regime={self.btc_regime}")
             except BinanceError as e:
                 log.error(f"Cycle BinanceError: {e}")
+                tg.notify_error("cycle", str(e))
             except Exception as e:
                 log.exception(f"Cycle unexpected error: {e}")
+                tg.notify_error("cycle", str(e))
 
             # sleep until next 15m bar close (+ small buffer)
             self._sleep_to_next_bar()
         log.info("Bot stopped cleanly.")
+        tg.notify_shutdown(config.STRATEGY_LEVEL, "manual")
         self.db.close()
 
     def _sleep_to_next_bar(self):

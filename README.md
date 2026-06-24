@@ -53,6 +53,33 @@ Key params vs aggressive:
 - MIN_SCORE = 5 (was 6) — take lower-confidence trades
 - DECISION_EVERY = 12 bars (was 16) — scan more frequently
 
+### strategy_aggressive_lv3.py — EXTREME HIGH RISK / HIGH REWARD
+**Highest return, accept large drawdowns AND liquidation risk**
+
+- 30/31 months profitable (97%)
+- Avg return: +181.63%/month
+- Median return: +148.19%
+- Avg PF: 1.66
+- Avg MaxDD: 19.3%
+- **9 liquidations in 31 months** (vs 0 for LV2/Aggressive)
+- Worst month: -4.57% (Sep 2024)
+- Best month: +557.50% (Aug 2024)
+
+Key params vs LV2:
+- RR = 5.5 (was 4.5) — even bigger winners
+- SL = 0.9x ATR (was 1.1) — even tighter stop
+- BE at 0.9R (was 0.7R) — let winners breathe longer
+- Trail from 2.0R (was 1.5R) — ride even bigger trends
+- POSITION_PCT = 12.0 (was 9.0) — bigger position
+- MAX_CONCURRENT = 15 (was 12), MAX_LEVERAGE = 15 (was 12)
+- MIN_SCORE = 4 (was 5) — take even lower-confidence trades
+- DECISION_EVERY = 8 bars (was 12) — scan every 2h
+- DAILY_LOSS_LIMIT = 10.0 (was 7.0), LIQ_SAFETY_ROE = 55.0 (was 50.0)
+
+**WARNING:** 9 liquidations means 9 positions lost entire margin. This is the
+key trade-off vs LV2 (0 LIQ). Only use if you can tolerate losing 100% of
+margin on individual positions in exchange for extreme returns.
+
 ### strategy_balanced.py (V14) — CONSERVATIVE
 **Lower return, proven robust, 0 liquidation**
 
@@ -133,8 +160,12 @@ Key params:
 ## Files
 
 ```
-strategy_aggressive.py          — V15r2 (BEST, high return)
+strategy_aggressive.py          — V15r2 (BEST, high return, 0 LIQ)
 strategy_aggressive_test.py     — 31-month test for aggressive
+strategy_aggressive_lv2.py      — LV2 (HIGH RISK, +74%, 0 LIQ)
+strategy_aggressive_lv2_test.py — 31-month test for LV2
+strategy_aggressive_lv3.py      — LV3 (EXTREME HIGH RISK, +182%, 9 LIQ)
+strategy_aggressive_lv3_test.py — 31-month test for LV3
 strategy_balanced.py            — V14 (conservative, proven)
 strategy_balanced_test.py       — 31-month test for balanced
 strategy_balanced_6month_test.py — 6-month continuous test for balanced
@@ -149,6 +180,12 @@ run_llm_agent.py                — LLM agent runner
 ```bash
 # Test aggressive strategy (31 months)
 python strategy_aggressive_test.py
+
+# Test LV2 strategy (31 months)
+python strategy_aggressive_lv2_test.py
+
+# Test LV3 strategy (31 months)
+python strategy_aggressive_lv3_test.py
 
 # Test balanced strategy (31 months)
 python strategy_balanced_test.py

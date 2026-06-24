@@ -5,14 +5,65 @@ Modes:
 - "dry"    : Real API for market data, but NO real orders (paper). Logs intended orders.
 - "live"   : Real money on Binance Futures mainnet. USE ONLY AFTER TESTNET VERIFIED.
 
+Strategy levels (set via BOT_STRATEGY env var):
+- "v15": V15r2  (conservative, 0 LIQ, +39%/mo avg)
+- "lv2": LV2    (aggressive, 0 LIQ, +74%/mo avg)
+- "lv3": LV3    (high risk, 9 LIQ, +182%/mo avg)
+- "lv4": LV4    (very high risk, 23 LIQ, +283%/mo avg)
+- "lv5": LV5    (extreme risk, 34 LIQ, +645%/mo avg)
+- "lv6": LV6    (maximum risk, 35 LIQ, +719%/mo avg)
+
 API keys are read from environment variables (never hard-code real keys):
   BINANCE_TESTNET_KEY / BINANCE_TESTNET_SECRET
   BINANCE_LIVE_KEY    / BINANCE_LIVE_SECRET
+
+Telegram notifications (optional):
+  TELEGRAM_BOT_TOKEN          - bot token from @BotFather
+  TELEGRAM_CHAT_<LEVEL>       - channel chat_id per strategy level
 """
 import os
 
+# === AUTO-LOAD .env (simple parser, no external dependency) ===
+def _load_dotenv():
+    """Load KEY=VALUE lines from live/.env into os.environ if not already set.
+    Existing environment variables take precedence (so CLI overrides .env)."""
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    if not os.path.exists(env_path):
+        return
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                k = k.strip(); v = v.strip().strip('"').strip("'")
+                # CLI/parent env wins; .env only fills what's missing
+                if k and k not in os.environ:
+                    os.environ[k] = v
+    except Exception:
+        pass
+
+_load_dotenv()
+
 # === MODE ===
 MODE = os.environ.get("BOT_MODE", "testnet")  # testnet | dry | live
+
+# === STRATEGY LEVEL ===
+# Must be one of: v15, lv2, lv3, lv4, lv5, lv6
+STRATEGY_LEVEL = os.environ.get("BOT_STRATEGY", "v15").lower()
+if STRATEGY_LEVEL not in ("v15", "lv2", "lv3", "lv4", "lv5", "lv6"):
+    raise ValueError(f"Invalid BOT_STRATEGY='{STRATEGY_LEVEL}'. Must be v15|lv2|lv3|lv4|lv5|lv6")
+
+# Map strategy level -> module name
+STRATEGY_MODULE = {
+    "v15": "strategy_aggressive",          # V15r2 baseline
+    "lv2": "strategy_aggressive_lv2",
+    "lv3": "strategy_aggressive_lv3",
+    "lv4": "strategy_aggressive_lv4",
+    "lv5": "strategy_aggressive_lv5",
+    "lv6": "strategy_aggressive_lv6",
+}[STRATEGY_LEVEL]
 
 # === ENDPOINTS ===
 ENDPOINTS = {
@@ -38,26 +89,52 @@ def is_real_orders():
 
 # === API KEYS ===
 def get_api_keys():
+    """Return (key, secret). For testnet/live, prefer a per-strategy key
+    (e.g. BINANCE_TESTNET_KEY_LV4) so each bot runs on its OWN account and
+    never adopts a sibling bot's positions. Falls back to the generic key."""
+    suffix = STRATEGY_LEVEL.upper()  # v15->V15, lv4->LV4
     if MODE == "live":
-        key = os.environ.get("BINANCE_LIVE_KEY", "")
-        sec = os.environ.get("BINANCE_LIVE_SECRET", "")
+        key = os.environ.get(f"BINANCE_LIVE_KEY_{suffix}", "") or os.environ.get("BINANCE_LIVE_KEY", "")
+        sec = os.environ.get(f"BINANCE_LIVE_SECRET_{suffix}", "") or os.environ.get("BINANCE_LIVE_SECRET", "")
     elif MODE == "testnet":
-        key = os.environ.get("BINANCE_TESTNET_KEY", "")
-        sec = os.environ.get("BINANCE_TESTNET_SECRET", "")
+        key = os.environ.get(f"BINANCE_TESTNET_KEY_{suffix}", "") or os.environ.get("BINANCE_TESTNET_KEY", "")
+        sec = os.environ.get(f"BINANCE_TESTNET_SECRET_{suffix}", "") or os.environ.get("BINANCE_TESTNET_SECRET", "")
     else:  # dry: keys optional (only needed for account endpoints)
-        key = os.environ.get("BINANCE_LIVE_KEY", "") or os.environ.get("BINANCE_TESTNET_KEY", "")
-        sec = os.environ.get("BINANCE_LIVE_SECRET", "") or os.environ.get("BINANCE_TESTNET_SECRET", "")
+        key = (os.environ.get(f"BINANCE_TESTNET_KEY_{suffix}", "")
+               or os.environ.get("BINANCE_LIVE_KEY", "") or os.environ.get("BINANCE_TESTNET_KEY", ""))
+        sec = (os.environ.get(f"BINANCE_TESTNET_SECRET_{suffix}", "")
+               or os.environ.get("BINANCE_LIVE_SECRET", "") or os.environ.get("BINANCE_TESTNET_SECRET", ""))
     return key, sec
 
-# === STRATEGY PARAMS (must match strategy_aggressive.py) ===
-POSITION_PCT = 7.0           # % of current equity per trade (compounding)
-MAX_CONCURRENT = 10          # max concurrent positions
-MAX_CONCURRENT_NEUTRAL = 5   # in neutral BTC regime
-MAX_LEVERAGE = 10
-MAX_LEVERAGE_NEUTRAL = 5
-DAILY_LOSS_LIMIT = 5.0       # % daily loss halt
-MIN_SCORE = 6
+# === STRATEGY PARAMS (auto-loaded from strategy module) ===
+# Import the strategy module to pull its params (single source of truth)
+import importlib as _il
+_strat_mod = _il.import_module(f"..{STRATEGY_MODULE}", package="live.config") \
+    if False else None  # placeholder; real import done in strategy_adapter
+# We import here using importlib with proper path
+import sys as _sys, os as _os
+_PARENT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+if _PARENT not in _sys.path:
+    _sys.path.insert(0, _PARENT)
+_strat_mod = _il.import_module(STRATEGY_MODULE)
+
+POSITION_PCT = _strat_mod.POSITION_PCT
+MAX_CONCURRENT = _strat_mod.MAX_CONCURRENT
+MAX_CONCURRENT_NEUTRAL = _strat_mod.MAX_CONCURRENT if not hasattr(_strat_mod, "_NEUTRAL_CAP") else _strat_mod._NEUTRAL_CAP
+# Fallback: neutral cap = 70% of MAX_CONCURRENT (matches strategy pattern)
+MAX_CONCURRENT_NEUTRAL = int(MAX_CONCURRENT * 0.7)
+MAX_LEVERAGE = _strat_mod.MAX_LEVERAGE
+MAX_LEVERAGE_NEUTRAL = int(MAX_LEVERAGE * 0.75)
+DAILY_LOSS_LIMIT = _strat_mod.DAILY_LOSS_LIMIT
+MIN_SCORE = _strat_mod.MIN_SCORE
 COINS_UNIVERSE_SIZE = 60     # how many top-volume symbols to scan each cycle
+
+# Strategy-specific BE/Trail R multiples (for live SL management)
+# These must match the backtest logic in each strategy module
+_BE_R = {"v15": 0.5, "lv2": 0.7, "lv3": 0.9, "lv4": 1.1, "lv5": 1.3, "lv6": 1.5}
+_TRAIL_R = {"v15": 1.2, "lv2": 1.5, "lv3": 2.0, "lv4": 2.5, "lv5": 3.0, "lv6": 3.5}
+BE_R_MULTIPLE = _BE_R[STRATEGY_LEVEL]
+TRAIL_R_MULTIPLE = _TRAIL_R[STRATEGY_LEVEL]
 
 # === EXECUTION CONSTRAINTS ===
 MIN_NOTIONAL_FALLBACK = 5.0  # used if exchange doesn't report; real value from exchangeInfo
@@ -67,7 +144,7 @@ QUOTE_ASSET = "USDT"
 BAR_INTERVAL = "15m"
 HTF_INTERVAL = "1h"
 BAR_SECONDS = 15 * 60
-DECISION_EVERY_BARS = 16     # scan entries every 16 bars (4h) -- matches backtest
+DECISION_EVERY_BARS = {"v15": 16, "lv2": 12, "lv3": 8, "lv4": 6, "lv5": 4, "lv6": 4}[STRATEGY_LEVEL]
 MAX_HOLD_BARS = 48           # close after 48 bars (12h)
 KLINES_LOOKBACK = 260        # bars to fetch for indicators (EMA200 needs >200)
 
@@ -82,5 +159,5 @@ RECV_WINDOW = 5000           # ms
 ORDER_PREFIX = "scbot"       # clientOrderId prefix to recognize our own orders
 
 # === PATHS ===
-STATE_DB_PATH = os.path.join(os.path.dirname(__file__), f"state_{MODE}.db")
-LOG_PATH = os.path.join(os.path.dirname(__file__), f"bot_{MODE}.log")
+STATE_DB_PATH = os.path.join(os.path.dirname(__file__), f"state_{MODE}_{STRATEGY_LEVEL}.db")
+LOG_PATH = os.path.join(os.path.dirname(__file__), f"bot_{MODE}_{STRATEGY_LEVEL}.log")

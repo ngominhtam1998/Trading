@@ -1,7 +1,8 @@
 """Adapter between live Binance klines and the backtest strategy logic.
 
-Reuses decide_v15 / add_indicators / get_btc_regime from strategy_aggressive.py
-WITHOUT modifying any trading logic. This module only:
+Reuses decide_v15 / add_indicators / get_btc_regime from the selected strategy
+module (v15/lv2/lv3/lv4/lv5/lv6) WITHOUT modifying any trading logic.
+This module only:
 - converts raw klines -> DataFrame in the shape add_indicators expects
 - selects the correct "signal bar" (last CLOSED bar, no look-ahead)
 - returns the decision dict for a symbol
@@ -9,17 +10,20 @@ WITHOUT modifying any trading logic. This module only:
 import os
 import sys
 import logging
+import importlib
 import pandas as pd
 from datetime import datetime, timezone
 
-# import the production strategy module (one dir up)
+# import the production strategy module (one dir up) based on config.STRATEGY_LEVEL
 _THIS = os.path.dirname(__file__)
 _PARENT = os.path.dirname(_THIS)
 if _PARENT not in sys.path:
     sys.path.insert(0, _PARENT)
-import strategy_aggressive as strat  # noqa: E402
 
 from . import config  # noqa: E402
+
+# Dynamically import the selected strategy module
+strat = importlib.import_module(config.STRATEGY_MODULE)
 
 log = logging.getLogger("strategy")
 

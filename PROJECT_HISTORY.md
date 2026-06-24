@@ -193,6 +193,152 @@ User yêu cầu version risk hơn, reward cao hơn nữa. Based on aggressive (V
 
 **Kết luận:** LV2 phù hợp user chấp nhận drawdown 20-30% để đổi return cao. Aggressive (V15r2) vẫn là production chính (100% tháng lãi, an toàn hơn). LV2 là option high-risk/high-reward.
 
+### Phase 9: Aggressive LV3 — Even higher risk/reward than LV2
+
+**File:** `production/strategy_aggressive_lv3.py`
+
+User yêu cầu version risk hơn nữa, reward cao hơn nữa. Based on LV2 với các thay đổi:
+
+1. **RR = 5.5** (was 4.5) — TP xa hơn nữa, winner lớn hơn nhiều
+2. **SL = 0.9x ATR** (was 1.1) — SL chặt hơn nữa, rủi ro mỗi trade nhỏ hơn nhưng hit rate thấp hơn
+3. **BE at 0.9R** (was 0.7R) — để winner breathe lâu hơn trước khi bảo vệ
+4. **Trail from 2.0R** (was 1.5R) — trail muộn hơn, ride trend lớn hơn nữa
+5. **POSITION_PCT = 12.0** (was 9.0) — position size lớn hơn nữa, compounding mạnh hơn
+6. **MAX_CONCURRENT = 15** (was 12) — nhiều vị thế đồng thời hơn
+7. **MAX_LEVERAGE = 15** (was 12) — leverage cao hơn
+8. **DAILY_LOSS_LIMIT = 10.0** (was 7.0) — chấp nhận daily DD lớn hơn
+9. **LIQ_SAFETY_ROE = 55.0** (was 50.0) — SL gần liquidation hơn
+10. **MIN_SCORE = 4** (was 5) — take even lower-confidence trades
+11. **DECISION_EVERY = 8 bars** (was 12) — scan entry mỗi 2h thay vì 3h
+12. **Neutral regime: max 10 concurrent, 10x lev** (was 7/7)
+
+**Kết quả 31 tháng backtest:**
+
+| Metric | Balanced (V14) | Aggressive (V15r2) | Aggressive LV2 | **Aggressive LV3** |
+|---|---|---|---|---|
+| Tháng có lãi | 26/31 (84%) | 31/31 (100%) | 29/31 (94%) | **30/31 (97%)** |
+| Avg return | +24.84% | +38.90% | +73.99% | **+181.63%** |
+| Median return | +20.80% | +32.46% | +54.84% | **+148.19%** |
+| Avg PF | 1.44 | 1.89 | 1.58 | 1.66 |
+| Avg MaxDD | 10.3% | 6.8% | 14.4% | **19.3%** |
+| Total LIQ | 0 | 0 | 0 | **9** |
+| Worst month | -11.45% | +2.44% | -6.43% | **-4.57%** |
+| Best month | +85.57% | +97.43% | +219.72% | **+557.50%** |
+| Avg trades/month | 254 | 266 | 345 | 439 |
+
+**Phân tích:**
+- Return gần gấp 2.5x LV2 (+182% vs +74%), gần 5x Aggressive (+182% vs +39%)
+- Compounding cực kỳ mạnh: Aug 2024 $1000→$6,575 (6.6x), Mar 2023 $1000→$5,391 (5.4x), Apr 2025 $1000→$4,938 (4.9x)
+- **CRITICAL: 9 liquidations** (Dec 2023: 1, Jun 2023: 1, Jan 2026: 1, Nov 2025: 2, + 5 others) — LV2/LV1 có 0
+- 1 tháng lỗ (Sep 2024 -4.57%), MaxDD avg 19.3% (có tháng 40.6% Feb 2025, 34.9% Nov 2024)
+- PF 1.66 (hơi tốt hơn LV2 1.58 do RR 5.5 bù hit rate thấp)
+- Trough equity có tháng xuống $705 (Feb 2025, -29.5%), $734 (Jul 2022, -26.6%)
+- LV3 thắng aggressive ở 30/31 tháng, chỉ thua Sep 2024 (-4.57% vs +21.82%)
+
+**Return distribution:**
+- -10% to 0%: 1 tháng (Sep 2024)
+- +10% to +30%: 2 tháng
+- +50% to +100%: 4 tháng
+- +100% to +200%: 13 tháng
+- +200% to +500%: 10 tháng
+- +500% to +1000%: 1 tháng (Aug 2024 +557.50%)
+
+**Kết luận:** LV3 phù hợp user chấp nhận drawdown 30-40% và **chấp nhận rủi ro liquidation** để đổi return cực cao. **9 liquidations trong 31 tháng là red flag lớn** — đây là điểm khác biệt quan trọng nhất vs LV2 (0 LIQ). Aggressive (V15r2) vẫn là production chính (100% tháng lãi, 0 LIQ, an toàn nhất). LV2 là sweet spot high-risk/reward (0 LIQ, +74%). LV3 là extreme high-risk/reward (9 LIQ, +182%) — chỉ dùng nếu chấp nhận mất toàn bộ margin của 1 vài vị thế.
+
+### Phase 10: Aggressive LV4 / LV5 / LV6 — Maximum risk tiers + LIVE DEPLOYMENT
+
+**Files:**
+- `production/strategy_aggressive_lv4.py` — LV4 (very high risk, 23 LIQ, +283%/mo)
+- `production/strategy_aggressive_lv5.py` — LV5 (extreme risk, 34 LIQ, +645%/mo)
+- `production/strategy_aggressive_lv6.py` — LV6 (maximum risk, 35 LIQ, +719%/mo)
+- `production/strategy_aggressive_lv4_test.py`, `_lv5_test.py`, `_lv6_test.py` — 31 tháng backtest
+- `production/continuous_2024_lv{2,3,4,5,6}.py`, `continuous_2024_v15.py` — continuous Jan2024–Jun2026 backtest
+
+User yêu cầu thêm 3 tier risk cao hơn LV3. Mỗi tier tăng POSITION_PCT, MAX_CONCURRENT, MAX_LEVERAGE, RR, giảm SL ATR multiplier:
+
+| Param | LV3 | LV4 | LV5 | LV6 |
+|---|---|---|---|---|
+| RR | 5.5 | 6.5 | 7.5 | 8.5 |
+| SL (ATR) | 0.9 | 0.8 | 0.7 | 0.6 |
+| BE at R | 0.9 | 1.1 | 1.3 | 1.5 |
+| Trail from R | 2.0 | 2.5 | 3.0 | 3.5 |
+| POSITION_PCT | 12 | 15 | 18 | 22 |
+| MAX_CONCURRENT | 15 | 18 | 20 | 25 |
+| MAX_LEVERAGE | 15 | 18 | 20 | 22 |
+| DAILY_LOSS_LIMIT | 10 | 12 | 15 | 18 |
+
+**Kết quả 31 tháng backtest (individual monthly, KHÔNG continuous compounding):**
+
+| Metric | LV4 | LV5 | LV6 |
+|---|---|---|---|
+| Tháng có lãi | 27/31 (87%) | 25/31 (81%) | 24/31 (77%) |
+| Avg return | +283% | +645% | +719% |
+| Total LIQ | 23 | 34 | 35 |
+| Worst month | -42.89% | -56.12% | -61.34% |
+| Best month | +1200%+ | +2500%+ | +2800%+ |
+
+**Lưu ý QUAN TRỌNG về backtest:** Continuous compounding (Jan2024–Jun2026 một mạch) cho kết quả "dream-like" (LV6 +7000%/năm), nhưng 31 monthly backtest riêng cho thấy thực tế khắc nghiệt hơn nhiều: worst month -61%, 23-35 liquidations. **Monthly backtest là con số thực tế hơn** — continuous compounding che giấu rủi ro bằng cách pha loãng qua thời gian dài.
+
+### Phase 11: Live Bot Production Deployment (TESTNET VERIFIED)
+
+**Mục tiêu:** Deploy 3 bot (LV4, LV5, LV6) song song trên Binance Futures Testnet, mỗi bot 1 account riêng, Telegram notify 3 channel riêng.
+
+**Các việc đã làm + verify:**
+
+1. **3 testnet account riêng** (mỗi account $5000 ảo, API key riêng trong `.env`):
+   - `BINANCE_TESTNET_KEY_LV4` / `BINANCE_TESTNET_SECRET_LV4`
+   - `BINANCE_TESTNET_KEY_LV5` / `BINANCE_TESTNET_SECRET_LV5`
+   - `BINANCE_TESTNET_KEY_LV6` / `BINANCE_TESTNET_SECRET_LV6`
+   - Account riêng tránh cross-bot conflict (bot A không adopt position của bot B)
+
+2. **Binance Algo Order API migration** (breaking change Dec 9, 2025):
+   - Binance bắt buộc dùng `/fapi/v1/algoOrder` cho STOP_MARKET / TAKE_PROFIT_MARKET
+   - Endpoint cũ `/fapi/v1/order` trả error `-4120` cho conditional orders
+   - `binance_client.py` đã migrate: `new_stop_market()`, `new_take_profit_market()`, `open_algo_orders()`, `cancel_algo_order()`
+   - Test `test_algo.py` PASS: mở position → đặt SL+TP → verify hiển thị → cancel → close, cleanup sạch
+
+3. **Telegram async notifications** (`telegram.py`):
+   - Background queue + worker thread, fire-and-forget, KHÔNG block trading loop
+   - 3 channel: `@trading_v4`, `@trading_v5`, `@trading_v6` (1 bot token, 3 chat_id)
+   - Noti chi tiết: entry (coin/hướng/lev/giá/volume/margin/SL/TP/RR/score/thời gian), exit (PnL tiền+%/hold time/reason), SL move (BE/trail), daily halt, startup/shutdown, error
+   - Queue full → drop oldest, never block
+   - Verified: 3 channel đều nhận message (test trực tiếp API + bot gửi)
+
+4. **Recovery test 17/17 PASS** (`test_recovery.py`):
+   - 6 scenario: clean shutdown, bot crash (DB có position sống), orphan position (DB trống exchange có position), stale DB (position đã đóng), rác orders, disconnect/reconnect
+   - Bot nhận đúng lệnh của mình (prefix `scbot_`), adopt orphan + đặt SL emergency, cleanup rác
+
+5. **Margin auto-scale fix** (QUAN TRỌNG):
+   - Bug: `POSITION_PCT × MAX_CONCURRENT` = 270%-550% equity →不可能 mở đủ slots
+   - Fix: `scan_entries()` check `avail >= margin_per_pos` trước mỗi entry, dừng khi hết margin
+   - Giống backtest logic `if cash < margin: continue`
+   - **Bot tự scale theo equity — $100 cũng chạy được** (chỉ mở ít lệnh hơn)
+   - Thêm `-4046` (margin type already set) + `-4045` (leverage not changed) vào `PERMANENT_CODES` → không retry, tiết kiệm 30s/cycle
+
+6. **3 bot chạy song song trên testnet (VERIFIED ~8.6 giờ overnight):**
+
+| Bot | Equity | Avail | Positions | Channel |
+|-----|--------|-------|-----------|---------|
+| LV4 | $4501→$4573 | $447 | 6 SHORT | @trading_v4 |
+| LV5 | $4563→$4644 | $454 | 5 SHORT | @trading_v5 |
+| LV6 | $4553→$4609 | $544 | 4 SHORT | @trading_v6 |
+
+   - Bot không vào lệnh mới khi hết margin → **đúng logic**
+   - Network error retry OK (Connection aborted → retry → success)
+   - SL/TP algo orders đặt đúng, hiển thị trong `open_algo_orders()`
+
+**Files đã sửa trong phase này:**
+- `production/live/config.py` — multi-strategy support, per-strategy API key, Telegram config, BE/Trail R multiples per level
+- `production/live/binance_client.py` — Algo Order API, `equity_usdt()`, `position_risk()` v3, `-4046`/`-4045` permanent
+- `production/live/bot.py` — margin check trước entry, detailed Telegram notifications, `_realized()`/`_notify_exit()` helpers
+- `production/live/telegram.py` — async queue + worker, formatted notifications
+- `production/live/strategy_adapter.py` — dynamic strategy module import
+- `production/live/.env` — 3 testnet API keys + Telegram token/chat IDs (KHÔNG commit, trong .gitignore)
+- `production/live/.env.example` — template
+- `production/live/cleanup.py` — one-shot cleanup (close all positions + cancel all orders)
+- `production/live/test_algo.py` — Algo Order API integration test
+- `production/live/test_noti.py` — Telegram notification test
+
 ---
 
 ## Cấu trúc file hiện tại
@@ -206,8 +352,18 @@ D:/Temp/Trading/
 │   ├── strategy_aggressive.py             # V15r2 — PRODUCTION (100% tháng lãi, +39%)
 │   ├── strategy_aggressive_test.py        # Test 31 tháng
 │   ├── strategy_aggressive_6month_test.py # Test 6 tháng liên tục (3 windows)
-│   ├── strategy_aggressive_lv2.py         # LV2 — HIGH RISK (94% tháng lãi, +74%)
+│   ├── strategy_aggressive_lv2.py         # LV2 — HIGH RISK (94% tháng lãi, +74%, 0 LIQ)
 │   ├── strategy_aggressive_lv2_test.py    # Test 31 tháng
+│   ├── strategy_aggressive_lv3.py         # LV3 — EXTREME HIGH RISK (97% tháng lãi, +182%, 9 LIQ)
+│   ├── strategy_aggressive_lv3_test.py    # Test 31 tháng
+│   ├── strategy_aggressive_lv4.py         # LV4 — VERY EXTREME (87% tháng lãi, +283%, 23 LIQ)
+│   ├── strategy_aggressive_lv4_test.py    # Test 31 tháng
+│   ├── strategy_aggressive_lv5.py         # LV5 — MAXIMUM RISK (81% tháng lãi, +645%, 34 LIQ)
+│   ├── strategy_aggressive_lv5_test.py    # Test 31 tháng
+│   ├── strategy_aggressive_lv6.py         # LV6 — ULTRA MAXIMUM (77% tháng lãi, +719%, 35 LIQ)
+│   ├── strategy_aggressive_lv6_test.py    # Test 31 tháng
+│   ├── continuous_2024_v15.py             # Continuous backtest V15r2 Jan2024–Jun2026
+│   ├── continuous_2024_lv{2,3,4,5,6}.py   # Continuous backtest LV2-LV6
 │   ├── strategy_balanced.py               # V14 — conservative (+25%)
 │   ├── strategy_balanced_test.py          # Test 31 tháng
 │   ├── strategy_balanced_6month_test.py   # Test 6 tháng liên tục
@@ -218,8 +374,14 @@ D:/Temp/Trading/
 │       ├── exchange_filters.py            # Precision, min-notional
 │       ├── state_db.py                    # SQLite state persistence
 │       ├── strategy_adapter.py            # Live klines → decide_v15
-│       ├── bot.py                         # Reconciliation + main loop
-│       └── test_recovery.py               # Offline recovery self-test
+│       ├── bot.py                         # Reconciliation + main loop + Telegram notify
+│       ├── telegram.py                    # Async Telegram notifications (queue + worker)
+│       ├── cleanup.py                     # One-shot: close all positions + cancel all orders
+│       ├── test_recovery.py               # Offline recovery self-test (17/17 PASS)
+│       ├── test_algo.py                   # Algo Order API integration test (PASS)
+│       ├── test_noti.py                   # Telegram notification test
+│       ├── .env                           # API keys + Telegram config (gitignored)
+│       └── .env.example                   # Template for .env
 │
 ├── experimental/                     # ← Version thử nghiệm (trống, sẽ thêm sau)
 │
@@ -320,21 +482,26 @@ python strategy_balanced_test.py            # V14 31 tháng
 
 ### Live bot
 ```bash
-# Testnet (fake money)
-$env:BINANCE_TESTNET_KEY="your_key"
-$env:BINANCE_TESTNET_SECRET="your_secret"
-$env:BOT_MODE="testnet"
-python -m live.bot
+# Testnet (fake money) — 3 bot song song
+# .env đã có API keys + Telegram config, chỉ cần set strategy:
+$env:BOT_MODE="testnet"; $env:BOT_STRATEGY="lv4"; python -m live.bot   # shell 1
+$env:BOT_MODE="testnet"; $env:BOT_STRATEGY="lv5"; python -m live.bot   # shell 2
+$env:BOT_MODE="testnet"; $env:BOT_STRATEGY="lv6"; python -m live.bot   # shell 3
 
 # Dry run (real data, no orders)
-$env:BOT_MODE="dry"
-python -m live.bot
+$env:BOT_MODE="dry"; $env:BOT_STRATEGY="v15"; python -m live.bot
 
 # Live (real money — after testnet verified)
-$env:BINANCE_LIVE_KEY="your_key"
-$env:BINANCE_LIVE_SECRET="your_secret"
-$env:BOT_MODE="live"
-python -m live.bot
+# Fill BINANCE_LIVE_KEY_LV4 etc in .env first
+$env:BOT_MODE="live"; $env:BOT_STRATEGY="lv4"; python -m live.bot
+
+# Cleanup (close all positions + cancel all orders on current account)
+$env:BOT_STRATEGY="lv4"; python -m live.cleanup
+
+# Tests
+python -m live.test_recovery   # recovery 17/17
+python -m live.test_algo       # Algo Order API
+python -m live.test_noti       # Telegram
 ```
 
 ### Recovery test (no keys needed)
@@ -348,8 +515,14 @@ python -m live.test_recovery
 
 - **Production strategy:** `strategy_aggressive.py` (V15r2) — 100% tháng lãi, +39%/mo avg, 0 LIQ
 - **Backup strategy:** `strategy_balanced.py` (V14) — 84% tháng lãi, +25%/mo, 0 LIQ
-- **Live bot:** `live/` — crash recovery đầy đủ, chưa test testnet
-- **Next step:** Test trên Binance Futures Testnet, verify lệnh thật + recovery thật, rồi mới live
+- **High-risk option:** `strategy_aggressive_lv2.py` (LV2) — 94% tháng lãi, +74%/mo, 0 LIQ (sweet spot)
+- **Extreme high-risk option:** `strategy_aggressive_lv3.py` (LV3) — 97% tháng lãi, +182%/mo, **9 LIQ**
+- **Very extreme:** `strategy_aggressive_lv4.py` (LV4) — 87% tháng lãi, +283%/mo, **23 LIQ**
+- **Maximum risk:** `strategy_aggressive_lv5.py` (LV5) — 81% tháng lãi, +645%/mo, **34 LIQ**
+- **Ultra maximum:** `strategy_aggressive_lv6.py` (LV6) — 77% tháng lãi, +719%/mo, **35 LIQ**
+- **Live bot:** `live/` — crash recovery đầy đủ, **TESTNET VERIFIED** (3 bot chạy song song overnight)
+- **Current deployment:** 3 bot (LV4/LV5/LV6) đang chạy trên testnet, Telegram notify 3 channel
+- **Next step:** Monitor testnet thêm vài ngày → nếu ổn → switch `BOT_MODE=live` + fill `BINANCE_LIVE_KEY_*` trong `.env`
 
 ## Lưu ý quan trọng
 
