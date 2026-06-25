@@ -422,7 +422,9 @@ class Bot:
         """Open a position for `symbol` based on decision `opp`."""
         direction = opp["dir"]
         lev = opp["lev"]
-        margin = equity * config.POSITION_PCT / 100.0
+        # v6+ score-based position sizing: use pos_pct from signal if present
+        pos_pct = opp.get("pos_pct", config.POSITION_PCT)
+        margin = equity * pos_pct / 100.0
         try:
             price = self.client.mark_price(symbol)
         except BinanceError as e:
@@ -672,8 +674,9 @@ class Bot:
             log.info(f"No free slots ({open_count}/{max_conc}), regime={self.btc_regime}")
             return
         # Per-position margin = equity * POSITION_PCT% (matches backtest).
-        # Stop opening once available balance can't cover the next margin.
-        margin_per_pos = equity * config.POSITION_PCT / 100.0
+        # For v6+ score-based sizing, use max possible (POS_SCORE_HIGH) for budget check.
+        max_pos_pct = max(config.POS_SCORE_HIGH, config.POSITION_PCT)
+        margin_per_pos = equity * max_pos_pct / 100.0
         # Reserve a small buffer for fees + maintenance margin on existing positions
         avail_budget = avail * 0.95
 
