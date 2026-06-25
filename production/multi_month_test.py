@@ -28,10 +28,13 @@ if STRAT_NAME == "lv6plus":
     import strategy_aggressive_lv6plus as strat
 elif STRAT_NAME == "lv6":
     import strategy_aggressive_lv6 as strat
+elif STRAT_NAME == "v6_3m":
+    import strategy_v6_3m as strat
 else:
     print(f"Unknown strategy: {STRAT_NAME}"); sys.exit(1)
 
-COINS = 30  # back to 30 — no 3m data needed
+# v6_3m needs 3m data → fewer coins to save RAM
+COINS = 20 if STRAT_NAME == "v6_3m" else 30
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_cache_months")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
@@ -64,10 +67,11 @@ print(f"Months: {', '.join(f'{y}-{m:02d}' for y, m in chosen)}\n")
 
 # === Cache key for a (month, coin_set) ===
 def cache_path(y, m, seed):
-    return os.path.join(CACHE_DIR, f"m_{y}_{m:02d}_s{seed}.pkl")
+    suffix = "_3m" if STRAT_NAME == "v6_3m" else ""
+    return os.path.join(CACHE_DIR, f"m_{y}_{m:02d}_s{seed}{suffix}.pkl")
 
 def fetch_month_data(y, m, seed):
-    """Fetch 30 random coins (15m + 1h) + BTC daily for one month + 20-day warmup. Cached."""
+    """Fetch coins (15m + 1h, + 3m if v6_3m) + BTC daily. Cached."""
     cp = cache_path(y, m, seed)
     if os.path.exists(cp):
         with open(cp, "rb") as f: return pickle.load(f)
@@ -79,13 +83,20 @@ def fetch_month_data(y, m, seed):
     all_symbols = strat.get_all_symbols()
     rng = random.Random(seed + y * 100 + m)
     candidates = rng.sample(all_symbols, min(COINS * 2, len(all_symbols)))
+    need_3m = STRAT_NAME == "v6_3m"
     coin_data = {}
     for coin in candidates:
         try:
             df15 = strat.fetch_klines_range(coin, "15m", fetch_start, month_end)
             df1h = strat.fetch_klines_range(coin, "1h", fetch_start, month_end)
-            if df15 is not None and len(df15) > 200 and df1h is not None and len(df1h) > 50:
-                coin_data[coin] = {"15m": df15, "1h": df1h}
+            if need_3m:
+                df3 = strat.fetch_klines_range(coin, "3m", fetch_start, month_end)
+                if (df15 is not None and len(df15) > 200 and df1h is not None
+                        and df3 is not None and len(df3) > 1000):
+                    coin_data[coin] = {"15m": df15, "1h": df1h, "3m": df3}
+            else:
+                if df15 is not None and len(df15) > 200 and df1h is not None and len(df1h) > 50:
+                    coin_data[coin] = {"15m": df15, "1h": df1h}
                 if len(coin_data) >= COINS: break
         except: pass
     if len(coin_data) < 10:
@@ -96,9 +107,15 @@ def fetch_month_data(y, m, seed):
     start_bar = len(sample_df) - month_start_bars  # bars before month_start = warmup (in 15m bars)
     start_bar = max(start_bar, 50)  # ensure at least WINDOW_SIZE
     # Filter coins: only keep those with enough bars
-    filtered = {k: v for k, v in coin_data.items()
-                if len(v["15m"]) >= start_bar + 100
-                and len(v["1h"]) >= start_bar // 4 + 50}
+    if need_3m:
+        filtered = {k: v for k, v in coin_data.items()
+                    if len(v["15m"]) >= start_bar + 100
+                    and len(v["3m"]) >= start_bar * 5 + 500
+                    and len(v["1h"]) >= start_bar // 4 + 50}
+    else:
+        filtered = {k: v for k, v in coin_data.items()
+                    if len(v["15m"]) >= start_bar + 100
+                    and len(v["1h"]) >= start_bar // 4 + 50}
     if len(filtered) < 10:
         print(f"  Only {len(filtered)} coins with enough data for {y}-{m:02d} "
               f"(start_bar={start_bar}), skip"); return None
