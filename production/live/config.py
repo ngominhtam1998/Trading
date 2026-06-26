@@ -85,8 +85,13 @@ def is_real_orders():
 def get_api_keys():
     """Return (key, secret). For testnet/live, prefer a per-strategy key
     (e.g. BINANCE_TESTNET_KEY_LV4) so each bot runs on its OWN account.
-    v6_3m uses lv4's account, v6_1m/v6_1m_plus uses lv5's account."""
-    suffix = "LV4" if STRATEGY_LEVEL == "v6_3m" else "LV5"
+    v6_3m uses lv4's account, v6_1m uses lv5's, v6_1m_plus uses lv6's."""
+    if STRATEGY_LEVEL == "v6_3m":
+        suffix = "LV4"
+    elif STRATEGY_LEVEL == "v6_1m":
+        suffix = "LV5"
+    else:  # v6_1m_plus
+        suffix = "LV6"
     if MODE == "live":
         key = os.environ.get(f"BINANCE_LIVE_KEY_{suffix}", "") or os.environ.get("BINANCE_LIVE_KEY", "")
         sec = os.environ.get(f"BINANCE_LIVE_SECRET_{suffix}", "") or os.environ.get("BINANCE_LIVE_SECRET", "")
