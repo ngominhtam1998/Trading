@@ -94,10 +94,13 @@ def get_api_keys():
     """Return (key, secret). For testnet/live, prefer a per-strategy key
     (e.g. BINANCE_TESTNET_KEY_LV4) so each bot runs on its OWN account and
     never adopts a sibling bot's positions. Falls back to the generic key.
-    lv6plus reuses lv4's account (temporary test)."""
+    lv6plus reuses lv4's account (temporary test).
+    v6_3m reuses lv5's account."""
     suffix = STRATEGY_LEVEL.upper()  # lv1->LV1, lv4->LV4, lv6plus->LV6PLUS
-    if STRATEGY_LEVEL in ("lv6plus", "v6_3m"):
+    if STRATEGY_LEVEL == "lv6plus":
         suffix = "LV4"  # borrow lv4's testnet account
+    if STRATEGY_LEVEL == "v6_3m":
+        suffix = "LV5"  # borrow lv5's testnet account
     if MODE == "live":
         key = os.environ.get(f"BINANCE_LIVE_KEY_{suffix}", "") or os.environ.get("BINANCE_LIVE_KEY", "")
         sec = os.environ.get(f"BINANCE_LIVE_SECRET_{suffix}", "") or os.environ.get("BINANCE_LIVE_SECRET", "")

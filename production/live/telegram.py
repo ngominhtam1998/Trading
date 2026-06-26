@@ -56,7 +56,7 @@ def _load_config():
         "lv5": os.environ.get("TELEGRAM_CHAT_LV5", ""),
         "lv6": os.environ.get("TELEGRAM_CHAT_LV6", ""),
         "lv6plus": os.environ.get("TELEGRAM_CHAT_LV4", ""),  # borrow lv4 channel
-        "v6_3m": os.environ.get("TELEGRAM_CHAT_LV4", ""),    # borrow lv4 channel
+        "v6_3m": os.environ.get("TELEGRAM_CHAT_LV5", ""),    # borrow lv5 channel
     }
     # SSL verification: ON for live (real money), OFF for testnet
     _session_verify = config.MODE == "live"
