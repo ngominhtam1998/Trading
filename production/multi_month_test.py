@@ -30,11 +30,13 @@ elif STRAT_NAME == "lv6":
     import strategy_aggressive_lv6 as strat
 elif STRAT_NAME == "v6_3m":
     import strategy_v6_3m as strat
+elif STRAT_NAME == "v6_1m":
+    import strategy_v6_1m as strat
 else:
     print(f"Unknown strategy: {STRAT_NAME}"); sys.exit(1)
 
-# v6_3m needs 3m data → fewer coins to save RAM
-COINS = 20 if STRAT_NAME == "v6_3m" else 30
+# v6_3m/v6_1m needs fine-grained data → fewer coins to save RAM
+COINS = 15 if STRAT_NAME in ("v6_3m", "v6_1m") else 30
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_cache_months")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
@@ -59,11 +61,12 @@ def month_range(y, m):
     return start, end
 
 # === Pick N random months (seeded) ===
-random.seed(SEED)
-chosen = random.sample(ALL_MONTHS, min(N_MONTHS, len(ALL_MONTHS)))
-chosen.sort()
-print(f"MULTI-MONTH TEST — strategy={STRAT_NAME} | {N_MONTHS} months | seed={SEED} | monitor={MON_LABEL}")
-print(f"Months: {', '.join(f'{y}-{m:02d}' for y, m in chosen)}\n")
+if __name__ == "__main__":
+    random.seed(SEED)
+    chosen = random.sample(ALL_MONTHS, min(N_MONTHS, len(ALL_MONTHS)))
+    chosen.sort()
+    print(f"MULTI-MONTH TEST — strategy={STRAT_NAME} | {N_MONTHS} months | seed={SEED} | monitor={MON_LABEL}")
+    print(f"Months: {', '.join(f'{y}-{m:02d}' for y, m in chosen)}\n")
 
 # === Cache key for a (month, coin_set) ===
 def cache_path(y, m, seed):
@@ -127,78 +130,79 @@ def fetch_month_data(y, m, seed):
     return payload
 
 # === Run backtest on each month ===
-results = []
-for y, m in chosen:
-    print(f"  {y}-{m:02d}: fetching data ...")
-    payload = fetch_month_data(y, m, SEED)
-    if payload is None:
-        results.append({"month": f"{y}-{m:02d}", "ret": None}); continue
-    coin_data = payload["coin_data"]; btc_daily = payload["btc_daily"]
-    start_bar = payload["start_bar"]
-    print(f"    {len(coin_data)} coins, warmup={start_bar} bars, running backtest ...")
-    trades, final_cap, max_conc, total_vol, liq_count, peak_eq, trough_eq = \
-        strat.backtest_portfolio(coin_data, btc_daily, start_bar=start_bar,
-                                 monitor_every=MONITOR_EVERY)
-    ret = (final_cap / strat.TOTAL_CAPITAL - 1) * 100
-    wins = sum(1 for t in trades if t["net_pnl"] > 0)
-    wr = wins / len(trades) * 100 if trades else 0
-    gp = sum(t["net_pnl"] for t in trades if t["net_pnl"] > 0)
-    gl = abs(sum(t["net_pnl"] for t in trades if t["net_pnl"] <= 0))
-    pf = gp / gl if gl > 0 else 99
-    # max drawdown
-    peak = strat.TOTAL_CAPITAL; cap = strat.TOTAL_CAPITAL; mdd = 0
-    for t in trades:
-        cap += t["net_pnl"]
-        if cap > peak: peak = cap
-        dd = (peak - cap) / peak * 100
-        if dd > mdd: mdd = dd
-    results.append({
-        "month": f"{y}-{m:02d}", "ret": ret, "wr": wr, "pf": pf, "mdd": mdd,
-        "trades": len(trades), "liq": liq_count, "final": final_cap,
-        "peak": peak_eq, "trough": trough_eq,
-    })
-    print(f"    -> ret={ret:+.2f}% | WR={wr:.1f}% | PF={pf:.2f} | MDD={mdd:.1f}% | "
-          f"trades={len(trades)} | liq={liq_count}")
+if __name__ == "__main__":
+    results = []
+    for y, m in chosen:
+        print(f"  {y}-{m:02d}: fetching data ...")
+        payload = fetch_month_data(y, m, SEED)
+        if payload is None:
+            results.append({"month": f"{y}-{m:02d}", "ret": None}); continue
+        coin_data = payload["coin_data"]; btc_daily = payload["btc_daily"]
+        start_bar = payload["start_bar"]
+        print(f"    {len(coin_data)} coins, warmup={start_bar} bars, running backtest ...")
+        trades, final_cap, max_conc, total_vol, liq_count, peak_eq, trough_eq = \
+            strat.backtest_portfolio(coin_data, btc_daily, start_bar=start_bar,
+                                     monitor_every=MONITOR_EVERY)
+        ret = (final_cap / strat.TOTAL_CAPITAL - 1) * 100
+        wins = sum(1 for t in trades if t["net_pnl"] > 0)
+        wr = wins / len(trades) * 100 if trades else 0
+        gp = sum(t["net_pnl"] for t in trades if t["net_pnl"] > 0)
+        gl = abs(sum(t["net_pnl"] for t in trades if t["net_pnl"] <= 0))
+        pf = gp / gl if gl > 0 else 99
+        # max drawdown
+        peak = strat.TOTAL_CAPITAL; cap = strat.TOTAL_CAPITAL; mdd = 0
+        for t in trades:
+            cap += t["net_pnl"]
+            if cap > peak: peak = cap
+            dd = (peak - cap) / peak * 100
+            if dd > mdd: mdd = dd
+        results.append({
+            "month": f"{y}-{m:02d}", "ret": ret, "wr": wr, "pf": pf, "mdd": mdd,
+            "trades": len(trades), "liq": liq_count, "final": final_cap,
+            "peak": peak_eq, "trough": trough_eq,
+        })
+        print(f"    -> ret={ret:+.2f}% | WR={wr:.1f}% | PF={pf:.2f} | MDD={mdd:.1f}% | "
+              f"trades={len(trades)} | liq={liq_count}")
 
-# === Aggregate report ===
-valid = [r for r in results if r["ret"] is not None]
-rets = [r["ret"] for r in valid]
-print(f"\n{'='*80}")
-print(f"  AGGREGATE — {STRAT_NAME} | {len(valid)} months")
-print(f"{'='*80}")
-if not rets:
-    print("  No valid results!"); sys.exit(0)
-rets_sorted = sorted(rets)
-avg = sum(rets) / len(rets)
-median = rets_sorted[len(rets_sorted) // 2]
-best = max(rets); worst = min(rets)
-profitable = sum(1 for r in rets if r > 0)
-std = (sum((r - avg) ** 2 for r in rets) / len(rets)) ** 0.5
-avg_mdd = sum(r["mdd"] for r in valid) / len(valid)
-max_mdd = max(r["mdd"] for r in valid)
-total_liq = sum(r["liq"] for r in valid)
-avg_trades = sum(r["trades"] for r in valid) / len(valid)
-print(f"  Avg monthly return:   {avg:+.2f}%")
-print(f"  Median monthly return:{median:+.2f}%")
-print(f"  Std dev:              {std:.2f}%")
-print(f"  Best month:           {best:+.2f}%")
-print(f"  Worst month:          {worst:+.2f}%")
-print(f"  Profitable months:    {profitable}/{len(rets)} ({profitable/len(rets)*100:.0f}%)")
-print(f"  Avg MaxDD:            {avg_mdd:.1f}%")
-print(f"  Max MaxDD:            {max_mdd:.1f}%")
-print(f"  Total liquidations:   {total_liq}")
-print(f"  Avg trades/month:     {avg_trades:.0f}")
-print(f"\n  Per-month detail:")
-print(f"  {'Month':>8} {'Ret':>8} {'WR':>6} {'PF':>5} {'MDD':>6} {'Tr':>5} {'LIQ':>4}")
-print(f"  {'-'*50}")
-for r in results:
-    if r["ret"] is None:
-        print(f"  {r['month']:>8}  NO DATA")
-    else:
-        print(f"  {r['month']:>8} {r['ret']:>+7.2f}% {r['wr']:>5.0f}% {r['pf']:>5.2f} "
-              f"{r['mdd']:>5.1f}% {r['trades']:>5} {r['liq']:>4}")
+    # === Aggregate report ===
+    valid = [r for r in results if r["ret"] is not None]
+    rets = [r["ret"] for r in valid]
+    print(f"\n{'='*80}")
+    print(f"  AGGREGATE — {STRAT_NAME} | {len(valid)} months")
+    print(f"{'='*80}")
+    if not rets:
+        print("  No valid results!"); sys.exit(0)
+    rets_sorted = sorted(rets)
+    avg = sum(rets) / len(rets)
+    median = rets_sorted[len(rets_sorted) // 2]
+    best = max(rets); worst = min(rets)
+    profitable = sum(1 for r in rets if r > 0)
+    std = (sum((r - avg) ** 2 for r in rets) / len(rets)) ** 0.5
+    avg_mdd = sum(r["mdd"] for r in valid) / len(valid)
+    max_mdd = max(r["mdd"] for r in valid)
+    total_liq = sum(r["liq"] for r in valid)
+    avg_trades = sum(r["trades"] for r in valid) / len(valid)
+    print(f"  Avg monthly return:   {avg:+.2f}%")
+    print(f"  Median monthly return:{median:+.2f}%")
+    print(f"  Std dev:              {std:.2f}%")
+    print(f"  Best month:           {best:+.2f}%")
+    print(f"  Worst month:          {worst:+.2f}%")
+    print(f"  Profitable months:    {profitable}/{len(rets)} ({profitable/len(rets)*100:.0f}%)")
+    print(f"  Avg MaxDD:            {avg_mdd:.1f}%")
+    print(f"  Max MaxDD:            {max_mdd:.1f}%")
+    print(f"  Total liquidations:   {total_liq}")
+    print(f"  Avg trades/month:     {avg_trades:.0f}")
+    print(f"\n  Per-month detail:")
+    print(f"  {'Month':>8} {'Ret':>8} {'WR':>6} {'PF':>5} {'MDD':>6} {'Tr':>5} {'LIQ':>4}")
+    print(f"  {'-'*50}")
+    for r in results:
+        if r["ret"] is None:
+            print(f"  {r['month']:>8}  NO DATA")
+        else:
+            print(f"  {r['month']:>8} {r['ret']:>+7.2f}% {r['wr']:>5.0f}% {r['pf']:>5.2f} "
+                  f"{r['mdd']:>5.1f}% {r['trades']:>5} {r['liq']:>4}")
 
-# Save results to JSON for comparison
-out_json = os.path.join(CACHE_DIR, f"results_{STRAT_NAME}_n{N_MONTHS}_s{SEED}_{MON_LABEL}.json")
-with open(out_json, "w") as f: json.dump(results, f, indent=2)
-print(f"\n  Results saved to: {out_json}")
+    # Save results to JSON for comparison
+    out_json = os.path.join(CACHE_DIR, f"results_{STRAT_NAME}_n{N_MONTHS}_s{SEED}_{MON_LABEL}.json")
+    with open(out_json, "w") as f: json.dump(results, f, indent=2)
+    print(f"\n  Results saved to: {out_json}")
