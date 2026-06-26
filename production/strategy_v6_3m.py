@@ -31,11 +31,15 @@ MIN_NOTIONAL = 5.0
 MAX_VOL_PCT = 10.0
 LIQ_SAFETY_ROE = 70.0
 
-# === 3M MONITORING PARAMS ===
+# === 3M MONITORING PARAMS (tuned: MC10, BE0.5, DLL8, TR2.0) ===
 BARS3_PER_15 = 5              # 5 x 3m = 15m
-BE_R = 1.5                    # move BE when bar CLOSES at 1.5R profit
-TRAIL_R = 3.5                 # move trail when bar CLOSES at 3.5R profit
+BE_R = 0.5                    # move BE when bar CLOSES at 0.5R profit (early lock)
+TRAIL_R = 2.0                 # move trail when bar CLOSES at 2.0R profit
 MAX_HOLD_BARS = 72            # 72 x 15m = 18h (same as v6+)
+SL_MULT = 0.6                 # SL = 0.6 x ATR
+RR = 9.0                      # Reward:Risk ratio
+MAX_CONCURRENT = 10           # max concurrent positions (was 20)
+DAILY_LOSS_LIMIT = 8.0        # halt day after 8% loss (was 15%)
 # 3m equivalents (computed)
 FUNDING_INTERVAL_3M = FUNDING_INTERVAL_BARS * BARS3_PER_15  # 80
 DAILY_HALT_BARS_3M = 96 * BARS3_PER_15                      # 480
@@ -186,8 +190,8 @@ def decide_v15(row, wd, htf_trend, btc_regime):
     else: lev = 8
     lev = min(lev, MAX_LEVERAGE)  # MAX_LEVERAGE=22
     if is_neutral: lev = min(lev, 18)  # was 15, allow more in neutral
-    # === V6-3M: back to v6 SL/RR, but SL/TP on CLOSE only (not high/low) ===
-    sl_mult = 0.6; rr = 9.0; sl_pct = max(sl_mult * a, 0.3)
+    # === V6-3M: SL/RR as tunable constants, SL/TP on CLOSE only ===
+    sl_mult = SL_MULT; rr = RR; sl_pct = max(sl_mult * a, 0.3)
     direction = None
     if up and sup and slope50 > 0.05:
         if 40 <= r <= 65 and b > 0: direction = "LONG"
