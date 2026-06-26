@@ -5,7 +5,7 @@ Run: python -m live.test_realized_pnl  (from D:/Tam/trading/production)
 import os
 
 os.environ.setdefault("BOT_MODE", "dry")
-os.environ.setdefault("BOT_STRATEGY", "lv4")
+os.environ.setdefault("BOT_STRATEGY", "v6_3m")
 
 from live.binance_client import BinanceClient
 

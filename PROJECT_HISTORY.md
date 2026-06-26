@@ -398,6 +398,30 @@ D:/Temp/Trading/
 
 ---
 
+## Phase: strategy_reversal_scalp (v6.1) — BỎ (2026-06-25)
+
+**Mục tiêu:** Mean-reversion scalping 1m, catch tops/bottoms trên top active coins, leverage cao (~22x), TP/SL adaptive nhỏ.
+
+**Kết quả backtest 15 ngày (8 coins: BTC/ETH/SOL/HYPE/ZEC/AAVE/DOGE/XRP):**
+
+| Version | PnL | WR | Trades | Liquidations |
+|---|---|---|---|---|
+| v1 (gốc: RSI78/22, BB 2.0σ, spike 1.5%) | -12.3% | 39.5% | 43 | 0 |
+| v2 (+trend filter +confirmed close) | -6.87% | 33.3% | 18 | 0 |
+| v3 (tighter RSI + HTF slope filter) | -9.28% | 25.0% | 8 | 0 |
+| v4 (looser entry + lower spike 1.2%) | -23.25% | 21.7% | 23 | 0 |
+
+**Kết luận: BỎ strategy.** Không có edge sau 4 lần backtest. Nguyên nhân:
+1. RSI 1m >78 + BB breakout = **momentum tiếp tục**, không phải đảo chiều. Overbought kéo dài rất lâu trong trend mạnh.
+2. Spike 1.2-1.5% trong 5 phút trên top coins (BTC/ETH) **quá hiếm** → ít trade, không đủ ý nghĩa thống kê.
+3. Khi spike xảy ra, thường do **tin tức** → tiếp tục chứ không reverse.
+4. SL 0.3-2% quá gần → bị **wick out** liên tục với leverage 22x.
+5. TP 0.3-1.5% cần **WR >60%** mới có lời sau phí — không đạt được.
+
+**Files giữ lại:** `strategy_reversal_scalp.py`, `backtest_reversal_scalp.py` (reference, không dùng production).
+
+---
+
 ## Chiến lược chi tiết (strategy_aggressive.py)
 
 ### Indicators (15m chart)
@@ -426,8 +450,7 @@ D:/Temp/Trading/
 - Special: RSI < 25 + ATR > 0.3% → deep oversold bounce short
 
 ### Scoring (5–10)
-- Base: 5
-- +1 volume spike (1.5x avg)
+- Base: 5- +1 volume spike (1.5x avg)
 - +1 strong slope (>0.15%)
 - +1 trend alignment (EMA9>21>50)
 - +1 ADX > 25

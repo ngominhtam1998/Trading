@@ -1,10 +1,11 @@
-fix: review refinements for live bot fixes
+feat: add v6_3m strategy (3m monitoring, SL/TP/BE on close)
 
-- realized_pnl_since now returns NET pnl (REALIZED_PNL + COMMISSION +
-  FUNDING_FEE) so Telegram exit PnL matches check_bots_status.py.
-- Remove unused os import; clearer non-decision-bar log message.
-- test_realized_pnl: verify commission/funding included, TRANSFER excluded.
+Key insight: 15m backtest has look-ahead bias (checks SL before BE within
+same bar). 3m monitoring is more realistic but needs SL/TP/BE on CLOSE
+only (not high/low) to avoid wick-outs.
 
-Generated with [Devin](https://devin.ai)
+Backtest 12 months: avg +387%, MDD 22.6%, 12/12 profitable, std 429
+vs v6/15m: avg +1359%, MDD 35.0%, 12/12, std 1483
 
-Co-Authored-By: Devin <158243242+devin-ai-integration[bot]@users.noreply.github.com>
+v6_3m has 3.5x lower std, 12% lower MDD, 1 liq (vs 16) — much safer.
+Lower return but far more realistic for live trading.

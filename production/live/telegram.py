@@ -49,14 +49,8 @@ def _load_config():
     from . import config  # noqa: F401
     _BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     _CHAT_IDS = {
-        "lv1": os.environ.get("TELEGRAM_CHAT_LV1", ""),
-        "lv2": os.environ.get("TELEGRAM_CHAT_LV2", ""),
-        "lv3": os.environ.get("TELEGRAM_CHAT_LV3", ""),
-        "lv4": os.environ.get("TELEGRAM_CHAT_LV4", ""),
-        "lv5": os.environ.get("TELEGRAM_CHAT_LV5", ""),
-        "lv6": os.environ.get("TELEGRAM_CHAT_LV6", ""),
-        "lv6plus": os.environ.get("TELEGRAM_CHAT_LV4", ""),  # borrow lv4 channel
-        "v6_3m": os.environ.get("TELEGRAM_CHAT_LV5", ""),    # borrow lv5 channel
+        "v6_3m": os.environ.get("TELEGRAM_CHAT_LV4", ""),    # @trading_v4
+        "v6_1m": os.environ.get("TELEGRAM_CHAT_LV5", ""),    # @trading_v5
     }
     # SSL verification: ON for live (real money), OFF for testnet
     _session_verify = config.MODE == "live"

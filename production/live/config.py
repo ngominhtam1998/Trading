@@ -6,12 +6,8 @@ Modes:
 - "live"   : Real money on Binance Futures mainnet. USE ONLY AFTER TESTNET VERIFIED.
 
 Strategy levels (set via BOT_STRATEGY env var):
-- "lv1": LV1    (conservative, 0 LIQ, +39%/mo avg)
-- "lv2": LV2    (aggressive, 0 LIQ, +74%/mo avg)
-- "lv3": LV3    (high risk, 9 LIQ, +182%/mo avg)
-- "lv4": LV4    (very high risk, 23 LIQ, +283%/mo avg)
-- "lv5": LV5    (extreme risk, 34 LIQ, +645%/mo avg)
-- "lv6": LV6    (maximum risk, 35 LIQ, +719%/mo avg)
+- "v6_3m": 3m monitoring (avg +1592%, WR 64%, dip -5%) → uses lv4 account
+- "v6_1m": 1m monitoring (avg +660%, WR 73%, dip -2%)  → uses lv5 account
 
 API keys are read from environment variables (never hard-code real keys):
   BINANCE_TESTNET_KEY / BINANCE_TESTNET_SECRET
@@ -50,21 +46,16 @@ _load_dotenv()
 MODE = os.environ.get("BOT_MODE", "testnet")  # testnet | dry | live
 
 # === STRATEGY LEVEL ===
-# Must be one of: lv1, lv2, lv3, lv4, lv5, lv6, lv6plus, v6_3m
-STRATEGY_LEVEL = os.environ.get("BOT_STRATEGY", "lv1").lower()
-if STRATEGY_LEVEL not in ("lv1", "lv2", "lv3", "lv4", "lv5", "lv6", "lv6plus", "v6_3m"):
-    raise ValueError(f"Invalid BOT_STRATEGY='{STRATEGY_LEVEL}'. Must be lv1|...|lv6|lv6plus|v6_3m")
+# Two strategies: v6_3m (3m monitoring) and v6_1m (1m monitoring)
+# v6_3m deployed on lv4 account, v6_1m deployed on lv5 account
+STRATEGY_LEVEL = os.environ.get("BOT_STRATEGY", "v6_3m").lower()
+if STRATEGY_LEVEL not in ("v6_3m", "v6_1m"):
+    raise ValueError(f"Invalid BOT_STRATEGY='{STRATEGY_LEVEL}'. Must be v6_3m|v6_1m")
 
 # Map strategy level -> module name
 STRATEGY_MODULE = {
-    "lv1": "strategy_aggressive_lv1",      # LV1 baseline (was V15r2)
-    "lv2": "strategy_aggressive_lv2",
-    "lv3": "strategy_aggressive_lv3",
-    "lv4": "strategy_aggressive_lv4",
-    "lv5": "strategy_aggressive_lv5",
-    "lv6": "strategy_aggressive_lv6",
-    "lv6plus": "strategy_aggressive_lv6plus",  # LV6+ enhanced (score sizing + max hold 72)
-    "v6_3m": "strategy_v6_3m",                 # V6 with 3m monitoring (realistic, MDD 22.6%)
+    "v6_3m": "strategy_v6_3m",   # 3m monitoring, avg +1592%, WR 64%
+    "v6_1m": "strategy_v6_1m",   # 1m monitoring, avg +660%, WR 73%
 }[STRATEGY_LEVEL]
 
 # === ENDPOINTS ===
@@ -92,15 +83,9 @@ def is_real_orders():
 # === API KEYS ===
 def get_api_keys():
     """Return (key, secret). For testnet/live, prefer a per-strategy key
-    (e.g. BINANCE_TESTNET_KEY_LV4) so each bot runs on its OWN account and
-    never adopts a sibling bot's positions. Falls back to the generic key.
-    lv6plus reuses lv4's account (temporary test).
-    v6_3m reuses lv5's account."""
-    suffix = STRATEGY_LEVEL.upper()  # lv1->LV1, lv4->LV4, lv6plus->LV6PLUS
-    if STRATEGY_LEVEL == "lv6plus":
-        suffix = "LV4"  # borrow lv4's testnet account
-    if STRATEGY_LEVEL == "v6_3m":
-        suffix = "LV5"  # borrow lv5's testnet account
+    (e.g. BINANCE_TESTNET_KEY_LV4) so each bot runs on its OWN account.
+    v6_3m uses lv4's account, v6_1m uses lv5's account."""
+    suffix = "LV4" if STRATEGY_LEVEL == "v6_3m" else "LV5"
     if MODE == "live":
         key = os.environ.get(f"BINANCE_LIVE_KEY_{suffix}", "") or os.environ.get("BINANCE_LIVE_KEY", "")
         sec = os.environ.get(f"BINANCE_LIVE_SECRET_{suffix}", "") or os.environ.get("BINANCE_LIVE_SECRET", "")
@@ -131,10 +116,8 @@ MAX_CONCURRENT = _strat_mod.MAX_CONCURRENT
 MAX_LEVERAGE = _strat_mod.MAX_LEVERAGE
 MAX_LEVERAGE_NEUTRAL = int(MAX_LEVERAGE * 0.75)
 
-# Neutral concurrent cap: must match backtest hard-coded values per level
-# (backtest sets a fixed cap, not a % of MAX_CONCURRENT)
-_MAX_CONCURRENT_NEUTRAL = {"lv1": 7, "lv2": 8, "lv3": 10, "lv4": 12, "lv5": 15, "lv6": 18, "lv6plus": 18, "v6_3m": 18}
-MAX_CONCURRENT_NEUTRAL = _MAX_CONCURRENT_NEUTRAL[STRATEGY_LEVEL]
+# Neutral concurrent cap
+MAX_CONCURRENT_NEUTRAL = _strat_mod.MAX_CONCURRENT
 DAILY_LOSS_LIMIT = _strat_mod.DAILY_LOSS_LIMIT
 MIN_SCORE = _strat_mod.MIN_SCORE
 COINS_UNIVERSE_SIZE = 60     # how many top-volume symbols to scan each cycle
@@ -144,12 +127,9 @@ POS_SCORE_HIGH = getattr(_strat_mod, "POS_SCORE_HIGH", POSITION_PCT)
 POS_SCORE_MID = getattr(_strat_mod, "POS_SCORE_MID", POSITION_PCT)
 POS_SCORE_LOW = getattr(_strat_mod, "POS_SCORE_LOW", POSITION_PCT)
 
-# Strategy-specific BE/Trail R multiples (for live SL management)
-# These must match the backtest logic in each strategy module
-_BE_R = {"lv1": 0.5, "lv2": 0.7, "lv3": 0.9, "lv4": 1.1, "lv5": 1.3, "lv6": 1.5, "lv6plus": 1.5, "v6_3m": 1.5}
-_TRAIL_R = {"lv1": 1.2, "lv2": 1.5, "lv3": 2.0, "lv4": 2.5, "lv5": 3.0, "lv6": 3.5, "lv6plus": 3.5, "v6_3m": 3.5}
-BE_R_MULTIPLE = _BE_R[STRATEGY_LEVEL]
-TRAIL_R_MULTIPLE = _TRAIL_R[STRATEGY_LEVEL]
+# Strategy-specific BE/Trail R multiples (from strategy module)
+BE_R_MULTIPLE = _strat_mod.BE_R
+TRAIL_R_MULTIPLE = _strat_mod.TRAIL_R
 
 # === EXECUTION CONSTRAINTS ===
 MIN_NOTIONAL_FALLBACK = 5.0  # used if exchange doesn't report; real value from exchangeInfo
@@ -159,8 +139,8 @@ QUOTE_ASSET = "USDT"
 BAR_INTERVAL = "15m"
 HTF_INTERVAL = "1h"
 BAR_SECONDS = 15 * 60
-DECISION_EVERY_BARS = {"lv1": 16, "lv2": 12, "lv3": 8, "lv4": 6, "lv5": 4, "lv6": 4, "lv6plus": 4, "v6_3m": 4}[STRATEGY_LEVEL]
-MAX_HOLD_BARS = getattr(_strat_mod, "MAX_HOLD_BARS", 48)  # v6+ uses 72, v6_3m uses 72
+DECISION_EVERY_BARS = 4  # scan every 4 x 15m = 1h
+MAX_HOLD_BARS = getattr(_strat_mod, "MAX_HOLD_BARS", 72)
 KLINES_LOOKBACK = 260        # bars to fetch for indicators (EMA200 needs >200)
 
 # === RECOVERY / ORPHAN HANDLING ===

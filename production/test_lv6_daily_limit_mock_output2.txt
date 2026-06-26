@@ -1,0 +1,34 @@
+﻿LV6 DAILY LOSS LIMIT COMPARISON ù Mock data Jun 2025 -> Jun 2026
+Base capital: $1000.0 | Coins: 15
+Generating mock data...
+
+======================================================================
+  LV6 DAILY_LIMIT=18%
+======================================================================
+  Final capital: $147995.43 | Total return: +14699.54%
+  Peak: $155699.37 | Trough: $984.55 | MaxDD: 99.4%
+  Trades: 1154 | Wins: 509 | Losses: 645 | WR: 44.1%
+  Avg win: $884.36 | Avg loss: $-469.99 | PF: 1.48
+  Liquidations: 0 | Max concurrent: 4
+  Total volume: $193,428,135.15
+
+======================================================================
+  LV6 DAILY_LIMIT=1000% (disabled)
+======================================================================
+  Final capital: $254542.51 | Total return: +25354.25%
+  Peak: $254542.51 | Trough: $1000.00 | MaxDD: 99.6%
+  Trades: 1193 | Wins: 539 | Losses: 654 | WR: 45.2%
+  Avg win: $877.13 | Avg loss: $-335.21 | PF: 2.16
+  Liquidations: 0 | Max concurrent: 4
+  Total volume: $151,880,104.76
+
+======================================================================
+  COMPARISON
+======================================================================
+  Return:        +14699.54% vs +25354.25%  (diff: +10654.71%)
+  MaxDD:         99.4% vs 99.6%  (diff: +0.2%)
+  Trades:        1154 vs 1193
+  Liquidations:  0 vs 0
+  Profit factor: 1.48 vs 2.16
+
+  => Disabling daily loss limit improves return without much extra drawdown
