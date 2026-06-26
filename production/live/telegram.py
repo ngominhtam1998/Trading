@@ -51,6 +51,7 @@ def _load_config():
     _CHAT_IDS = {
         "v6_3m": os.environ.get("TELEGRAM_CHAT_LV4", ""),    # @trading_v4
         "v6_1m": os.environ.get("TELEGRAM_CHAT_LV5", ""),    # @trading_v5
+        "v6_1m_plus": os.environ.get("TELEGRAM_CHAT_LV5", ""),  # @trading_v5
     }
     # SSL verification: ON for live (real money), OFF for testnet
     _session_verify = config.MODE == "live"
