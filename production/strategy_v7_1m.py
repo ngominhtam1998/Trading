@@ -31,14 +31,14 @@ LIQ_SAFETY_ROE = 70.0
 
 # === V7-1M PARAMS (tuned from v6_1m_plus: TRAIL_R 3.0 -> 2.0) ===
 BARS1_PER_15 = 15              # 15 x 1m = 15m
-BE_R = 0.5                    # move BE when bar CLOSES at 0.5R profit (early lock)
+BE_R = 0.2                    # move BE when bar CLOSES at 0.2R profit (very early, WR 87%)
 TRAIL_R = 2.0                 # move trail when bar CLOSES at 2.0R profit (tuned: earlier = more profit)
 MAX_HOLD_BARS = 72            # 72 x 15m = 18h
 SL_MULT = 0.6                 # SL = 0.6 x ATR
 RR = 12.0                     # Reward:Risk ratio (higher TP target)
 MAX_CONCURRENT = 15           # max concurrent positions
 DAILY_LOSS_LIMIT = 12.0       # halt day after 12% loss
-POSITION_PCT = 30.0           # position size %
+POSITION_PCT = 40.0           # position size % (tuned: 40% = more profit per BE win)
 MAX_LEVERAGE = 25             # max leverage
 # 1m equivalents (computed)
 FUNDING_INTERVAL_1M = FUNDING_INTERVAL_BARS * BARS1_PER_15  # 240
