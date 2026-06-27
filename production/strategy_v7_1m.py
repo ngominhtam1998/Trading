@@ -1,13 +1,16 @@
-"""V6-1M-PLUS: Aggressive version of v6_1m — higher risk, higher reward.
+"""V7-1M: Lab version — v6_1m_plus tuned (TRAIL_R 3.0 -> 2.0).
 
-Based on v6_1m (1m monitoring, BE/trail on CLOSE). Key changes:
-- POSITION_PCT: 22% → 30% (bigger position size)
-- MAX_LEVERAGE: 22x → 25x (more leverage)
-- MAX_CONCURRENT: 10 → 15 (more simultaneous positions)
-- TRAIL_R: 2.0 → 3.0 (let winners run longer before trailing)
-- RR: 9.0 → 12.0 (higher TP target)
-- DAILY_LOSS_LIMIT: 8% → 12% (more risk tolerance per day)
+Based on v6_1m_plus with auto-tuned TRAIL_R. Key changes from v6_1m:
+- POSITION_PCT: 22% -> 30% (bigger position size)
+- MAX_LEVERAGE: 22x -> 25x (more leverage)
+- MAX_CONCURRENT: 10 -> 15 (more simultaneous positions)
+- TRAIL_R: 2.0 (tuned: earlier trail locks more profit, +18% median)
+- RR: 9.0 -> 12.0 (higher TP target)
+- DAILY_LOSS_LIMIT: 8% -> 12% (more risk tolerance per day)
 - BE_R: 0.5 (KEEP — early BE lock is key to high WR)
+
+Backtest 5 months: avg +901%, med +980%, Sharpe 1.62, dip -7%, 0 liq.
+NOT deployed — lab only. Production = v6_1m_plus (TRAIL_R=3.0).
 
 Entry signals: 15m. Position management: 1m bars (all on CLOSE).
 """
@@ -26,17 +29,17 @@ MIN_NOTIONAL = 5.0
 MAX_VOL_PCT = 10.0
 LIQ_SAFETY_ROE = 70.0
 
-# === 1M-PLUS MONITORING PARAMS (aggressive) ===
+# === V7-1M PARAMS (tuned from v6_1m_plus: TRAIL_R 3.0 -> 2.0) ===
 BARS1_PER_15 = 15              # 15 x 1m = 15m
-BE_R = 0.5                    # move BE when bar CLOSES at 0.5R profit (early lock, KEEP)
-TRAIL_R = 3.0                 # move trail when bar CLOSES at 3.0R profit (let winners run)
+BE_R = 0.5                    # move BE when bar CLOSES at 0.5R profit (early lock)
+TRAIL_R = 2.0                 # move trail when bar CLOSES at 2.0R profit (tuned: earlier = more profit)
 MAX_HOLD_BARS = 72            # 72 x 15m = 18h
 SL_MULT = 0.6                 # SL = 0.6 x ATR
 RR = 12.0                     # Reward:Risk ratio (higher TP target)
-MAX_CONCURRENT = 15           # max concurrent positions (was 10)
-DAILY_LOSS_LIMIT = 12.0       # halt day after 12% loss (was 8%)
-POSITION_PCT = 30.0           # position size % (was 22%)
-MAX_LEVERAGE = 25             # max leverage (was 22)
+MAX_CONCURRENT = 15           # max concurrent positions
+DAILY_LOSS_LIMIT = 12.0       # halt day after 12% loss
+POSITION_PCT = 30.0           # position size %
+MAX_LEVERAGE = 25             # max leverage
 # 1m equivalents (computed)
 FUNDING_INTERVAL_1M = FUNDING_INTERVAL_BARS * BARS1_PER_15  # 240
 DAILY_HALT_BARS_1M = 96 * BARS1_PER_15                      # 1440
