@@ -48,14 +48,14 @@ MODE = os.environ.get("BOT_MODE", "testnet")  # testnet | dry | live
 # === STRATEGY LEVEL ===
 # Two strategies: v6_3m (3m monitoring) and v6_1m (1m monitoring)
 # v6_3m deployed on lv4 account, v6_1m deployed on lv5 account
-STRATEGY_LEVEL = os.environ.get("BOT_STRATEGY", "v6_3m").lower()
-if STRATEGY_LEVEL not in ("v6_3m", "v6_1m", "v6_1m_plus"):
-    raise ValueError(f"Invalid BOT_STRATEGY='{STRATEGY_LEVEL}'. Must be v6_3m|v6_1m|v6_1m_plus")
+STRATEGY_LEVEL = os.environ.get("BOT_STRATEGY", "v7_1m").lower()
+if STRATEGY_LEVEL not in ("v7_1m", "v6_1m", "v6_1m_plus"):
+    raise ValueError(f"Invalid BOT_STRATEGY='{STRATEGY_LEVEL}'. Must be v7_1m|v6_1m|v6_1m_plus")
 
 # Map strategy level -> module name
 STRATEGY_MODULE = {
-    "v6_3m": "strategy_v6_3m",       # 3m monitoring, avg +1592%, WR 64%
-    "v6_1m": "strategy_v6_1m",       # 1m monitoring, avg +660%, WR 73%
+    "v7_1m": "strategy_v7_1m",         # 1m aggressive, BE0.1, avg +2127%, WR 91%
+    "v6_1m": "strategy_v6_1m",         # 1m monitoring, avg +660%, WR 73%
     "v6_1m_plus": "strategy_v6_1m_plus",  # 1m aggressive, avg +881%, WR 71%
 }[STRATEGY_LEVEL]
 
@@ -85,8 +85,8 @@ def is_real_orders():
 def get_api_keys():
     """Return (key, secret). For testnet/live, prefer a per-strategy key
     (e.g. BINANCE_TESTNET_KEY_LV4) so each bot runs on its OWN account.
-    v6_3m uses lv4's account, v6_1m uses lv5's, v6_1m_plus uses lv6's."""
-    if STRATEGY_LEVEL == "v6_3m":
+    v7_1m uses lv4's account, v6_1m uses lv5's, v6_1m_plus uses lv6's."""
+    if STRATEGY_LEVEL == "v7_1m":
         suffix = "LV4"
     elif STRATEGY_LEVEL == "v6_1m":
         suffix = "LV5"

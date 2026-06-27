@@ -49,7 +49,7 @@ def _load_config():
     from . import config  # noqa: F401
     _BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     _CHAT_IDS = {
-        "v6_3m": os.environ.get("TELEGRAM_CHAT_LV4", ""),    # @trading_v4
+        "v7_1m": os.environ.get("TELEGRAM_CHAT_LV4", ""),    # @trading_v4
         "v6_1m": os.environ.get("TELEGRAM_CHAT_LV5", ""),    # @trading_v5
         "v6_1m_plus": os.environ.get("TELEGRAM_CHAT_LV6", ""),  # @trading_v6
     }
