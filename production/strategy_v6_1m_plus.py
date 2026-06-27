@@ -29,7 +29,7 @@ LIQ_SAFETY_ROE = 70.0
 # === 1M-PLUS MONITORING PARAMS (aggressive) ===
 BARS1_PER_15 = 15              # 15 x 1m = 15m
 BE_R = 0.5                    # move BE when bar CLOSES at 0.5R profit (early lock, KEEP)
-TRAIL_R = 3.0                 # move trail when bar CLOSES at 3.0R profit (let winners run)
+TRAIL_R = 2.0                 # move trail when bar CLOSES at 2.0R profit (tuned: earlier trail = more profit locked)
 MAX_HOLD_BARS = 72            # 72 x 15m = 18h
 SL_MULT = 0.6                 # SL = 0.6 x ATR
 RR = 12.0                     # Reward:Risk ratio (higher TP target)
