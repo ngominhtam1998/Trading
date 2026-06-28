@@ -2,7 +2,7 @@
 Opens a tiny BTCUSDT position, places algo SL+TP, verifies they appear in
 open_algo_orders, cancels them, then closes the position. Cleans up fully.
 
-Run: python -m live.test_algo  (BOT_MODE=testnet BOT_STRATEGY=lv4)
+Run: python -m live.test_algo  (BOT_MODE=testnet BOT_STRATEGY=opus)
 """
 import os, time
 from . import config

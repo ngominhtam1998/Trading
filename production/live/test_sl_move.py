@@ -8,7 +8,7 @@ import time
 import tempfile
 
 os.environ.setdefault("BOT_MODE", "dry")
-os.environ.setdefault("BOT_STRATEGY", "v6_3m")
+os.environ.setdefault("BOT_STRATEGY", "opus")
 
 from live import config
 from live.state_db import StateDB
@@ -53,11 +53,17 @@ class FakeClient:
         return self._mark_price
 
     def klines(self, symbol, interval, limit=3):
-        # Return a bar with high/low that triggers BE/trail for SHORT
-        # bar format: open, high, low, close, volume, quote_volume
-        mp = self._mark_price
-        return [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                [0, mp * 1.02, mp * 0.95, 0, 0, 0, 0, 0, 0, 0, 0, 0]]
+        # 40 synthetic 1m bars ~99.4 with tiny wicks. For a SHORT entered at 100
+        # this is +0.6R profit -> opus compute_trail_sl triggers a BE move to
+        # 99.75 (be_floor), which sits above mark (98.5) and below the initial
+        # SL (101) so the bot cancels old SL and places the new one.
+        # row: [open_time, open, high, low, close, vol, close_time, qv, trades, tbb, tbq, ignore]
+        bars = []
+        t = 0
+        for _ in range(40):
+            bars.append([t, 99.4, 99.45, 99.35, 99.4, 1.0, t + 59999, 99.4, 1, 0.5, 49.7, 0.0])
+            t += 60000
+        return bars
 
     def open_algo_orders(self, symbol=None):
         if symbol is None:

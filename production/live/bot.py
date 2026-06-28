@@ -1,7 +1,7 @@
 """Live trading bot for Binance USDT-M Futures.
 
-Trading logic is UNCHANGED (reused from strategy_aggressive_lv1.decide_v15).
-This file is the execution + safety layer:
+Trading logic lives in the active strategy module (strategy_opus for the opus
+level), accessed via strategy_adapter. This file is the execution + safety layer:
 
   * Real STOP_MARKET / TAKE_PROFIT_MARKET orders on the exchange protect every
     position even if the bot process dies (closePosition=true reduce-only).

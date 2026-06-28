@@ -22,7 +22,7 @@ import tempfile
 
 # ensure we run in a sandbox mode that needs no keys
 os.environ.setdefault("BOT_MODE", "dry")
-os.environ.setdefault("BOT_STRATEGY", "v6_3m")
+os.environ.setdefault("BOT_STRATEGY", "opus")
 
 from . import config           # noqa: E402
 from .state_db import StateDB  # noqa: E402

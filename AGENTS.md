@@ -5,24 +5,24 @@
 ### VPS (production)
 - **IP:** 74.113.235.40 (Kamatera Singapore)
 - **SSH:** `ssh root@74.113.235.40`
-- **3 bots:** systemd services `trading-bot-lv4`, `trading-bot-lv5`, `trading-bot-lv6`
+- **1 bot active:** systemd service `trading-bot-opus-v4` (lv5/lv6 đã retired — stop+disable)
 - **Repo:** `/opt/trading` (venv: `/opt/trading/venv`)
-- **Log:** `/opt/trading/production/live/bot_testnet_lv{4,5,6}.log`
+- **Log:** `/opt/trading/production/live/bot_testnet_opus.log`
 - **Trial hết hạn:** ~2026-07-24 (30 ngày từ 2026-06-24)
 
 ### Quản lý VPS
 ```bash
 ssh root@74.113.235.40
-systemctl status trading-bot-lv4      # status
-systemctl restart trading-bot-lv4 lv5 lv6  # restart all
-cd /opt/trading && git pull origin main    # update code
-systemctl restart trading-bot-lv4 lv5 lv6  # restart after update
-tail -f /opt/trading/production/live/bot_testnet_lv4.log  # log
+systemctl status trading-bot-opus-v4     # status
+systemctl restart trading-bot-opus-v4    # restart
+cd /opt/trading && git pull origin main  # update code
+systemctl restart trading-bot-opus-v4    # restart after update
+tail -f /opt/trading/production/live/bot_testnet_opus.log  # log
 ```
 
 ### Laptop (dev/fallback)
 - Repo: `D:\Tam\trading`
-- Run: `cd D:\Tam\trading\production; $env:BOT_MODE="testnet"; $env:BOT_STRATEGY="lv4"; python -m live.bot`
+- Run: `cd D:\Tam\trading\production; $env:BOT_MODE="testnet"; $env:BOT_STRATEGY="opus"; python -m live.bot`
 - SSH scripts: `setup_vps.py`, `setup_vps_bots.py`, `start_vps_bots.py`, `check_vps_bots.py`, `fix_vps.py`, `fix_vps_logs.py`
 - **Bot status + PnL**: `python check_bots_status.py` (shows balance, positions, open orders, today's realized PnL)
 
@@ -31,7 +31,7 @@ tail -f /opt/trading/production/live/bot_testnet_lv4.log  # log
 - Test recovery: `python -m live.test_recovery` (17/17 PASS)
 - Test decision cadence: `python -m live.test_decision_bars` (6/6 PASS)
 - Test SL move: `python -m live.test_sl_move` (6/6 PASS)
-- Test realized PnL: `python -m live.test_realized_pnl` (4/4 PASS)
+- Test realized PnL: `python -m live.test_realized_pnl` (5/5 PASS)
 
 #### Real-API tests (cần .env keys, chạy trên VPS)
 - Test data verify: `python -m live.test_data_verify` (40/40 PASS)
@@ -75,5 +75,5 @@ tail -f /opt/trading/production/live/bot_testnet_lv4.log  # log
 ### Khi lên live
 1. SSH vào VPS
 2. `nano /opt/trading/production/live/.env` → `BOT_MODE=live` + fill live keys
-3. `systemctl restart trading-bot-lv4 lv5 lv6`
+3. `systemctl restart trading-bot-opus-v4`
 4. Monitor sát ngày đầu

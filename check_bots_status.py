@@ -66,13 +66,13 @@ total_commission_today = 0.0
 total_funding_today = 0.0
 total_closed_today = 0
 
-total_initial = 5000 * 3  # 3 bots
+total_initial = 5000 * 3  # 3 testnet accounts; only opus-v4 is actively managed
 
 log(f"Check time: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
-# Systemd status
+# Systemd status (only opus-v4 is an active bot; lv5/lv6 services are retired)
 import subprocess
-for svc in ['trading-bot-lv4', 'trading-bot-lv5', 'trading-bot-lv6']:
+for svc in ['trading-bot-opus-v4']:
     try:
         res = subprocess.run(['systemctl', 'is-active', svc], capture_output=True, text=True, timeout=5)
         status = res.stdout.strip() or 'unknown'
@@ -80,16 +80,18 @@ for svc in ['trading-bot-lv4', 'trading-bot-lv5', 'trading-bot-lv6']:
         status = f'error: {e}'
     log(f"  {svc}: {status}")
 
+BOT_LABELS = {'lv4': 'opus', 'lv5': 'lv5 (retired, leftover)', 'lv6': 'lv6 (retired, leftover)'}
 for level in ['lv4', 'lv5', 'lv6']:
     suffix = level.upper()
+    label = BOT_LABELS[level]
     k = env.get(f'BINANCE_TESTNET_KEY_{suffix}', '') or env.get('BINANCE_TESTNET_KEY', '')
     s = env.get(f'BINANCE_TESTNET_SECRET_{suffix}', '') or env.get('BINANCE_TESTNET_SECRET', '')
     if not k or not s:
-        log(f"\\n[{level.upper()}] MISSING KEYS")
+        log(f"\\n[{label}] MISSING KEYS")
         continue
 
     log(f"\\n{'='*70}")
-    log(f"[{level.upper()}]")
+    log(f"[{label}]")
     try:
         bal = api_call(k, s, 'GET', '/fapi/v3/balance')
         usdt = next((x for x in bal if x['asset'] == 'USDT'), {})
@@ -159,7 +161,7 @@ for level in ['lv4', 'lv5', 'lv6']:
         log(traceback.format_exc())
 
 log("\\n" + "="*70)
-log("TOTAL 3 BOTS")
+log("TOTAL (3 accounts; only opus-v4 actively managed)")
 log(f"  Wallet balance:  {total_wallet:.2f} USDT")
 log(f"  Unrealized PnL:  {total_upnl:+.2f} USDT")
 log(f"  Total equity:    {total_equity:.2f} USDT")

@@ -1,7 +1,7 @@
 """Adapter between live Binance klines and the backtest strategy logic.
 
 Reuses decide_v15 / add_indicators / get_btc_regime from the selected strategy
-module (lv1/lv2/lv3/lv4/lv5/lv6) WITHOUT modifying any trading logic.
+module (currently strategy_opus) WITHOUT modifying any trading logic.
 This module only:
 - converts raw klines -> DataFrame in the shape add_indicators expects
 - selects the correct "signal bar" (last CLOSED bar, no look-ahead)

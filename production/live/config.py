@@ -6,8 +6,8 @@ Modes:
 - "live"   : Real money on Binance Futures mainnet. USE ONLY AFTER TESTNET VERIFIED.
 
 Strategy levels (set via BOT_STRATEGY env var):
-- "v6_3m": 3m monitoring (avg +1592%, WR 64%, dip -5%) → uses lv4 account
-- "v6_1m": 1m monitoring (avg +660%, WR 73%, dip -2%)  → uses lv5 account
+- "opus": multi-timeframe, BTC-aware, 1m-managed scalper → uses lv4 account
+  (legacy v6/v7/v8 strategies have been retired)
 
 API keys are read from environment variables (never hard-code real keys):
   BINANCE_TESTNET_KEY / BINANCE_TESTNET_SECRET
@@ -46,21 +46,15 @@ _load_dotenv()
 MODE = os.environ.get("BOT_MODE", "testnet")  # testnet | dry | live
 
 # === STRATEGY LEVEL ===
-# Two strategies: v6_3m (3m monitoring) and v6_1m (1m monitoring)
-# v6_3m deployed on lv4 account, v6_1m deployed on lv5 account
-STRATEGY_LEVEL = os.environ.get("BOT_STRATEGY", "v7_1m").lower()
-if STRATEGY_LEVEL not in ("opus", "v7_1m", "v7_1m_be02", "v8_1m", "v6_1m", "v6_1m_plus"):
-    raise ValueError(f"Invalid BOT_STRATEGY='{STRATEGY_LEVEL}'. "
-                     f"Must be opus|v7_1m|v7_1m_be02|v8_1m|v6_1m|v6_1m_plus")
+# Only opus is supported. Legacy v6/v7/v8 strategies have been retired
+# (they lost money on testnet despite profitable backtests).
+STRATEGY_LEVEL = os.environ.get("BOT_STRATEGY", "opus").lower()
+if STRATEGY_LEVEL != "opus":
+    raise ValueError(f"Invalid BOT_STRATEGY='{STRATEGY_LEVEL}'. Only 'opus' is supported.")
 
 # Map strategy level -> module name
 STRATEGY_MODULE = {
-    "opus": "strategy_opus",           # multi-timeframe, BTC-aware, 1m-managed scalper
-    "v7_1m": "strategy_v7_1m",         # 1m aggressive, BE0.1, avg +2127%, WR 91%
-    "v7_1m_be02": "strategy_v7_1m_be02",  # BE0.2 + POS40, avg +2035%, WR 88%
-    "v8_1m": "strategy_v8_1m",         # high-frequency scalp, BE0.1, RR=2, POS=7.5%
-    "v6_1m": "strategy_v6_1m",         # 1m monitoring, avg +660%, WR 73%
-    "v6_1m_plus": "strategy_v6_1m_plus",  # 1m aggressive, avg +881%, WR 71%
+    "opus": "strategy_opus",          # multi-timeframe, BTC-aware, 1m-managed scalper
 }[STRATEGY_LEVEL]
 
 # === ENDPOINTS ===
@@ -87,24 +81,14 @@ def is_real_orders():
 
 # === API KEYS ===
 def get_api_keys():
-    """Return (key, secret). For testnet/live, prefer a per-strategy key
-    (e.g. BINANCE_TESTNET_KEY_LV4) so each bot runs on its OWN account.
-    v7_1m uses lv4's account, v6_1m uses lv5's, v6_1m_plus uses lv6's."""
+    """Return (key, secret). For testnet/live, prefer a per-account key
+    (e.g. BINANCE_TESTNET_KEY_LV4) so the bot runs on its OWN account.
+    opus runs on the lv4 account; override with BOT_ACCOUNT if needed."""
     account = os.environ.get("BOT_ACCOUNT", "")
     if account:
         suffix = account.upper()
-    elif STRATEGY_LEVEL == "opus":
-        suffix = "LV4"  # opus replaces v8 on the LV4 account
-    elif STRATEGY_LEVEL == "v7_1m":
+    else:  # opus -> lv4 account
         suffix = "LV4"
-    elif STRATEGY_LEVEL == "v7_1m_be02":
-        suffix = "LV6"
-    elif STRATEGY_LEVEL == "v8_1m":
-        suffix = "LV4"  # default to LV4, override with BOT_ACCOUNT
-    elif STRATEGY_LEVEL == "v6_1m":
-        suffix = "LV5"
-    else:  # v6_1m_plus
-        suffix = "LV6"
     if MODE == "live":
         key = os.environ.get(f"BINANCE_LIVE_KEY_{suffix}", "") or os.environ.get("BINANCE_LIVE_KEY", "")
         sec = os.environ.get(f"BINANCE_LIVE_SECRET_{suffix}", "") or os.environ.get("BINANCE_LIVE_SECRET", "")

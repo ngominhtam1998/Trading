@@ -18,6 +18,10 @@ production/live/bot_*.log
 *.pkl
 *.cache
 
+# Replay/backtest data caches (kline + result dumps; kept locally to avoid re-fetch)
+production/_cache_opus/
+production/_cache_months/
+
 # API keys (NEVER commit)
 .env
 .env.local

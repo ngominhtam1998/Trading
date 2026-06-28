@@ -1,8 +1,8 @@
 # Live Trading Bot — Binance USDT-M Futures
 
-Execution + safety layer around the `strategy_aggressive_lv1` (LV1) strategy.
-**Trading logic is unchanged** — this only adds order execution, error handling,
-and crash recovery.
+Execution + safety layer around the **opus** strategy (`strategy_opus.py`).
+See `production/OPUS_TRADING.md` for the full strategy design; this file covers
+the live execution/safety layer.
 
 ## Safety model (read this first)
 
@@ -62,7 +62,7 @@ $env:BOT_MODE="testnet"
 ```bash
 python -m live.bot
 ```
-(run from `D:/Temp/Trading`)
+(run from `D:/Tam/trading/production`)
 
 ### 4. Going live (after testnet works)
 ```powershell
@@ -80,35 +80,43 @@ live/
 ├── binance_client.py    # signed REST client: retries, backoff, error handling
 ├── exchange_filters.py  # per-symbol precision / min-notional rounding
 ├── state_db.py          # SQLite: positions, closed trades, events, kv
-├── strategy_adapter.py  # live klines -> decide_v15 (shared function name, no logic change)
-├── bot.py               # reconciliation + main loop (entry/manage)
+├── strategy_adapter.py  # live klines -> strategy.analyze_live (opus MTF decision)
+├── bot.py               # reconciliation + main loop (entry/manage, 60s loop)
 └── test_recovery.py     # offline crash-recovery self-test (no keys needed)
 ```
 
-## Key config (live/config.py)
+## Key config (strategy_opus.py + live/config.py)
 
-| Setting | Default | Meaning |
+The strategy params live in `production/strategy_opus.py`; `live/config.py`
+handles mode/keys/timing. Key opus params:
+
+| Setting | Value | Meaning |
 |---|---|---|
-| `POSITION_PCT` | 7.0 | % of equity per trade (compounding) |
-| `MAX_CONCURRENT` | 10 | max open positions (5 in neutral regime) |
-| `MAX_LEVERAGE` | 10 | cap leverage (5 in neutral regime) |
-| `DAILY_LOSS_LIMIT` | 5.0 | halt new entries if down 5% on the day |
-| `MIN_SCORE` | 6 | minimum signal score |
-| `COINS_UNIVERSE_SIZE` | 60 | top-volume symbols scanned per cycle |
-| `DECISION_EVERY_BARS` | 16 | entry scan cadence (matches backtest) |
-| `MAX_HOLD_BARS` | 48 | force-close after 12h |
+| `POSITION_PCT` | 6.0 | % of equity per trade (scaled by confluence score) |
+| `MAX_CONCURRENT` | 10 | max open positions |
+| `MAX_LEVERAGE` | 12 | leverage cap |
+| `DAILY_LOSS_LIMIT` | 8.0 | halt new entries if down 8% on the day |
+| `MIN_SCORE` | 6 | minimum confluence score to enter |
+| `UNIVERSE` | 30 | curated liquid major coins (no exotic testnet coins) |
+| `SL_MAX_PCT` / `SL_ATR_MULT` | 1.3 / 1.4 | structure-based stop geometry |
+| `RR` | 1.8 | reward:risk for TP |
+| `BE_R` / `BE_LOCK_PCT` | 0.5 / 0.25 | breakeven trigger / locked profit |
+| `TRAIL_START_R` / `TRAIL_ATR_MULT` | 0.7 / 1.2 | ATR trailing stop |
+| `LOOP_SECONDS` | 60 | management loop cadence (1m) |
+| `ENTRY_EVERY_LOOPS` | 3 | entry scan every 3 min |
 | `ORPHAN_ACTION` | adopt | what to do with orphan positions |
 
 ## How the loop works
 
-Every 15-minute bar close:
-1. Refresh BTC regime (bull/bear/neutral) from BTC daily EMA50/EMA200.
-2. Fetch current positions + equity.
-3. **Manage** open positions: move SL to breakeven at 0.5R, trail at 1.2R
-   (cancels old SL order, places new one), force-close at max hold.
-4. **Scan entries** (if not daily-halted): rank top-volume symbols by signal
-   score, open positions in free slots.
-5. Sleep to next bar.
+Every `LOOP_SECONDS` (60s):
+1. Fetch current positions + equity.
+2. **Manage** open positions on 1m close: move SL to breakeven at `BE_R`, then
+   ATR-trail at `TRAIL_ATR_MULT` (cancel old SL, place new one).
+3. Every `ENTRY_EVERY_LOOPS` (3 min): build short-term BTC context, scan the
+   curated `UNIVERSE` with multi-timeframe alignment (15m trend, 5m momentum,
+   1h context, 1m trigger), gate with bounce/exhaustion + funding filters,
+   rank by confluence score, open positions in free slots.
+4. Sleep to next loop.
 
 SL/TP themselves trigger on the exchange intraday — more precise than the
 bar-resolution backtest.

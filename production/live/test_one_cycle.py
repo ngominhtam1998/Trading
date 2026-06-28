@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Set env BEFORE importing bot
 os.environ["BOT_MODE"] = "testnet"
-os.environ["BOT_STRATEGY"] = "lv4"
+os.environ["BOT_STRATEGY"] = "opus"
 
 from live import config
 from live import telegram as tg

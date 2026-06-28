@@ -49,10 +49,15 @@ def _load_config():
     from . import config  # noqa: F401
     _BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     _CHAT_IDS = {
-        "v7_1m": os.environ.get("TELEGRAM_CHAT_LV4", ""),    # @trading_v4
-        "v6_1m": os.environ.get("TELEGRAM_CHAT_LV5", ""),    # @trading_v5
-        "v6_1m_plus": os.environ.get("TELEGRAM_CHAT_LV6", ""),  # @trading_v6
+        "opus": os.environ.get("TELEGRAM_CHAT_LV4", ""),       # @trading_v4 (lv4 account)
     }
+    # Override by BOT_ACCOUNT if set (allows same strategy on different channels/accounts)
+    account = os.environ.get("BOT_ACCOUNT", "")
+    if account:
+        chat_env = f"TELEGRAM_CHAT_{account.upper()}"
+        chat_id = os.environ.get(chat_env, "")
+        if chat_id:
+            _CHAT_IDS[account] = chat_id
     # SSL verification: ON for live (real money), OFF for testnet
     _session_verify = config.MODE == "live"
     _session.verify = _session_verify
@@ -122,7 +127,9 @@ def send(message, level=None, parse_mode="HTML"):
     if level is None:
         from . import config
         level = config.STRATEGY_LEVEL
-    chat_id = _CHAT_IDS.get(level, "")
+    # BOT_ACCOUNT overrides strategy-level channel
+    account = os.environ.get("BOT_ACCOUNT", "")
+    chat_id = _CHAT_IDS.get(account, "") or _CHAT_IDS.get(level, "")
     if not _BOT_TOKEN or not chat_id:
         return False  # not configured -> silently skip, no network, no block
 

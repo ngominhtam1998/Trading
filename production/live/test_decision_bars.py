@@ -6,7 +6,7 @@ import os
 import time
 
 os.environ.setdefault("BOT_MODE", "dry")
-os.environ.setdefault("BOT_STRATEGY", "v6_3m")
+os.environ.setdefault("BOT_STRATEGY", "opus")
 
 from live import config
 from live.bot import Bot

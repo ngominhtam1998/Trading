@@ -1,7 +1,7 @@
 """One-shot cleanup: close all positions + cancel all orders on a testnet account.
-Run:  BOT_STRATEGY=lv4 python -m live.cleanup
-      BOT_STRATEGY=lv5 python -m live.cleanup
-      BOT_STRATEGY=lv6 python -m live.cleanup
+Run:  BOT_STRATEGY=opus BOT_ACCOUNT=LV4 python -m live.cleanup
+      BOT_STRATEGY=opus BOT_ACCOUNT=LV5 python -m live.cleanup
+      BOT_STRATEGY=opus BOT_ACCOUNT=LV6 python -m live.cleanup
 """
 import time
 from . import config
