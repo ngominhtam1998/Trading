@@ -1,226 +1,149 @@
-# HANDOFF — Trading Bot (2026-06-24 update 2)
+# HANDOFF — Repo cleanup & opus-only (2026-06-28)
 
-> File này để AI/máy khác tiếp tục công việc. Đọc kỹ trước khi làm gì.
+> Ghi chú bàn giao cho agent tiếp theo (Devin). Đọc file này trước khi làm gì.
+> File liên quan cũng nên đọc: `production/OPUS_TRADING.md` (design opus),
+> `DEPLOYMENT_STATUS.md` (trạng thái deploy), `AGENTS.md` (rules + lệnh).
 
-## Dự án là gì
+## TL;DR — Trạng thái hiện tại
+- **Chỉ còn 1 strategy: `opus`** (`production/strategy_opus.py`). Toàn bộ v6/v7/v8 đã **xóa** (chạy testnet toàn thua dù backtest lãi).
+- **1 bot đang chạy**: `trading-bot-opus-v4` trên account **lv4 testnet**, active + healthy, equity ~4982, đang giữ 1 vị thế SOLUSDT, regime=bear, 9 slot trống.
+- **v5/v6 đã retired** (stop + disable). User tự đóng vị thế leftover + reset tiền lv5/lv6 (KHÔNG cần lo, đừng động vào).
+- Repo đã dọn, commit, push, pull VPS, restart opus-v4, verify sạch.
 
-Bot scalping crypto trên Binance Futures (USDT perpetuals). 6 chiến lược từ conservative → ultra high risk. Live bot đã verify trên testnet.
+## Đã làm trong session này (cleanup)
 
-## Trạng thái HIỆN TẠI (2026-06-24 03:54 UTC)
+### 1. Retire v5/v6 trên VPS
+- `trading-bot-v7-1m-v5.service` + `trading-bot-v7-1m-be02-v6.service`: `systemctl stop` + `disable` (inactive, khỏi autostart).
+- Lúc retire, lv5 còn 3 vị thế SHORT lãi ~+747 USDT (ETH/BCH/DOGE), lv6 còn 2 vị thế SHORT lãi ~+661 USDT (ETH/DOGE), đều có SL/TP trên sàn. **User bảo tự đóng tay + reset tiền → không can thiệp.**
 
-**3 bot đang chạy 24/7 trên VPS Kamatera (KHÔNG còn chạy trên laptop):**
+### 2. Xóa 27 file rác (local + VPS)
+- **Strategy cũ**: `strategy_v6_1m.py`, `strategy_v6_1m_plus.py`, `strategy_v6_3m.py`, `strategy_v7_1m.py`, `strategy_v7_1m_be02.py`, `strategy_v8_1m.py`
+- **Runners/backtest**: `continuous_2024_lv{2,3,4,5,6,v15}.py`, `auto_tune_v6_1m_plus.py`, `auto_tune_v6_3m.py`, `auto_tune_v7_1m.py`, `backtest_reversal_scalp.py`, `multi_month_test.py`
+- **Test cũ**: `test_v6_1m.py`, `test_v6_1m_plus.py`, `test_lv6_daily_limit_mock.py`, `test_opus_replay_fixed.py` (bản trùng opus test)
+- **Debug**: `_tmp_debug_2025_04.py`, `_tmp_debug_may_jun.py`
 
-| Bot | Status | VPS | Channel | Positions |
-|-----|--------|-----|---------|-----------|
-| LV4 | active | Kamatera SG | @trading_v4 | 2 (AGTUSDT, VELVETUSDT) |
-| LV5 | active | Kamatera SG | @trading_v5 | 2 (AGTUSDT, VELVETUSDT) |
-| LV6 | active | Kamatera SG | @trading_v6 | 2 (AGTUSDT, VELVETUSDT) |
+### 3. Chuyển opus-only
+- `production/live/config.py`: validation chỉ còn `opus`; `STRATEGY_MODULE={"opus":"strategy_opus"}`; `get_api_keys()` → account LV4 (override bằng `BOT_ACCOUNT`). Giá trị default `BOT_STRATEGY` đổi từ `v7_1m` → `opus`. Bất kỳ strategy cũ nào đều raise `ValueError`.
+- `production/live/telegram.py`: `_CHAT_IDS` chỉ còn `opus` (TELEGRAM_CHAT_LV4 → @trading_v4) + cơ chế override bằng `BOT_ACCOUNT`. (File này có thay đổi từ session trước chưa commit, giờ gộp vào commit cleanup.)
+- `production/live/bot.py` + `strategy_adapter.py`: chỉ sửa comment/docstring sang opus (logic không đổi).
+- **5 live test + cleanup.py + test_algo.py**: đổi default `BOT_STRATEGY` từ `v6_3m`/`lv4` → `opus` (v6_3m/lv4 đã xóa, không đổi thì test fail khi import config).
+- `production/live/test_sl_move.py`: `FakeClient.klines` cũ trả bar toàn 0 → opus `compute_trail_sl` ra `new_sl=0` → bot skip. Đã craft 40 bar 1m tại ~99.4 (SHORT entry 100, +0.6R) để trigger BE move tới 99.75 (trên mark 98.5, dưới SL cũ 101). Test lại 6/6 PASS.
+- `check_bots_status.py` (root): service list → chỉ `trading-bot-opus-v4`; label lv5/lv6 = "retired, leftover".
+- `DEPLOYMENT_STATUS.md` (root): opus-v4 là bot duy nhất active, v5/v6 retired, bảng params opus, kết quả replay.
+- `production/live/README_LIVE.md`: mô tả opus (loop 60s, MTF, params), thay flow 15m cũ.
+- `AGENTS.md`: "3 bots" → "1 bot active opus-v4"; lệnh restart; `BOT_STRATEGY=opus`; realized_pnl 5/5.
+- `.gitignore`: thêm `production/_cache_opus/` + `production/_cache_months/` (giữ local, không lên git).
 
-**VPS Kamatera:**
-- IP: `74.113.235.40` (Singapore)
-- OS: Ubuntu 26.04 LTS, Python 3.14.4
-- RAM: 955MB + 1GB swap (3 bot tốn ~385MB)
-- Trial 30 ngày ($100 credit), sau đó ~$4/tháng
-- systemd: `trading-bot-lv4`, `trading-bot-lv5`, `trading-bot-lv6` (Restart=always)
+### 4. Verify local
+- `import live.bot` / `live.config` / `strategy_opus` OK.
+- Config VPS: `LEVEL=opus MODULE=strategy_opus LOOP=60 ENTRY=3`.
+- Mock test pass: `test_recovery` 17/17, `test_decision_bars` 6/6, `test_sl_move` 6/6, `test_realized_pnl` 5/5.
+- `py_compile test_opus_replay.py test_opus_regimes.py strategy_opus.py` OK.
+- Grep: không còn tham chiếu strategy cũ trong file giữ lại.
 
-**Laptop đã STOP 3 bot** (chuyển sang VPS, tránh chạy 2 nơi cùng lúc).
+### 5. Commit + push + deploy
+- Commit `80ef3ef` — "Retire legacy v6/v7/v8 strategies; opus-only" (18 file xóa, -3949 dòng).
+- Commit `33f9a84` — "Apply opus-only config/docs/tests after legacy strategy removal" (18 file sửa/thêm, +307/-89).
+- Đã `git push origin main` (HEAD = origin/main).
+- VPS `git pull` fast-forward `462d9ee..33f9a84`, 36 file, toàn file cũ mất khỏi VPS, `git ls-files` sạch.
+- `systemctl restart trading-bot-opus-v4` → **active**, log: `STRATEGY=opus`, reconcile OK, Telegram @trading_v4, loop 60s chạy đều.
+- v5/v6: `enabled=disabled active=inactive`.
 
-## Cấu trúc thư mục chính
+## Opus strategy — tham số hiện tại (strategy_opus.py)
+| Param | Giá trị |
+|---|---|
+| `POSITION_PCT` | 6.0 (scale theo confluence score) |
+| `POS_SCORE_HIGH/MID/LOW` | 9.0 / 6.5 / 4.5 |
+| `MAX_CONCURRENT` | 10 |
+| `MAX_LEVERAGE` | 12 |
+| `DAILY_LOSS_LIMIT` | 8.0 |
+| `MIN_SCORE` | 6 |
+| `SL_MIN_PCT` / `SL_MAX_PCT` | 0.40 / 1.3 |
+| `SL_ATR_MULT` | 1.4 |
+| `RR` | 1.8 |
+| `BE_R` / `BE_LOCK_PCT` | 0.5 / 0.25 |
+| `TRAIL_START_R` / `TRAIL_ATR_MULT` | 0.7 / 1.2 |
+| `LOOP_SECONDS` | 60 |
+| `ENTRY_EVERY_LOOPS` | 3 (entry scan mỗi 3 phút) |
+| `UNIVERSE` | 30 coin liquid major (BTC/ETH/BNB/SOL/.../RUNE) |
 
+**Design pillars** (chi tiết trong `production/OPUS_TRADING.md`):
+- MTF: 15m trend + 5m momentum + 1h context + 1m trigger.
+- BTC short-term context (1m/5m/15m + bounce/exhaustion guard) — fetch 1 lần/scan.
+- Quản lý trên 1m CLOSE (60s loop): BE@0.5R lock 0.25%, ATR-trail@0.7R×1.2ATR.
+- Replay sát thực tế: **wick fills** (không close-based), slippage 0.06%, fee taker, funding.
+- `UNIVERSE` cố định 30 coin → tránh coin illiquid trên testnet làm hỏng SL fill.
+- `fetch_klines_range` có retry + `ban_until` chống IP ban Binance (-1003).
+
+## Cấu trúc repo sau cleanup
 ```
-D:\Tam\trading\
-├── HANDOFF.md                          # ← FILE NÀY
-├── PROJECT_HISTORY.md                  # Lịch sử đầy đủ 11 phases
-├── README.md                           # Tổng quan + so sánh strategies
-├── SETUP_VPS_FREE.md                   # Hướng dẫn setup Kamatera/Hetzner
-├── SETUP_VPS_ORACLE.md                 # Hướng dẫn setup Oracle Cloud
-├── setup_vps.py                        # Script SSH setup VPS (paramiko)
-├── setup_vps_bots.py                   # Script upload .env + tạo systemd
-├── start_vps_bots.py                   # Script start bots trên VPS
-├── check_vps_bots.py                   # Script check status VPS
-├── fix_vps.py                          # Script add swap VPS
-├── fix_vps_logs.py                     # Script fix duplicate log + pull code
-├── production/
-│   ├── strategy_aggressive_lv1.py      # LV1 (conservative, +39%/mo, 0 LIQ)
-│   ├── strategy_aggressive_lv{2..6}.py # LV2-LV6 (risk tăng dần)
-│   ├── strategy_aggressive_lv{2..6}_test.py  # 31 tháng backtest
-│   ├── continuous_2024_*.py            # Continuous backtest Jan2024–Jun2026
-│   └── live/                           # ← LIVE BOT (production)
-│       ├── config.py                   # Mode/strategy/keys/params
-│       ├── binance_client.py           # REST client + Algo Order API
-│       ├── bot.py                      # Main loop + recovery + Telegram
-│       ├── telegram.py                 # Async notifications (verify=False)
-│       ├── strategy_adapter.py         # Live klines → strategy + funding filter
-│       ├── exchange_filters.py         # Precision/min-notional
-│       ├── state_db.py                 # SQLite state persistence
-│       ├── cleanup.py                  # Close all + cancel all (one-shot)
-│       ├── test_data_verify.py         # 40/40 PASS (verify API data)
-│       ├── test_sl_fix.py              # 8/9 PASS (atomic SL swap)
-│       ├── test_funding.py             # 10/10 PASS (funding rate filter)
-│       ├── test_one_cycle.py           # End-to-end 1 cycle
-│       ├── test_recovery.py            # 17/17 PASS
-│       ├── test_algo.py                # Algo Order API PASS
-│       ├── .env                        # API keys + Telegram (GITIGNORED)
-│       └── .env.example                # Template
+production/
+├── strategy_opus.py            # strategy duy nhất
+├── test_opus_replay.py         # replay sát thực tế (intrabar wick fills)
+├── test_opus_regimes.py        # chạy replay qua nhiều regime (max_workers=2)
+├── close_all_positions.py      # utility đóng hết position (lv4/5/6)
+├── close_lv4.py                # utility đóng lv4
+├── OPUS_TRADING.md             # doc design opus
+├── _cache_opus/                # 32 file replay_*.pkl (gitignored, giữ local)
+├── _cache_months/              # 65 m_*.pkl + 23 results_*.json (gitignored, DATA CŨ cho v6/v7 — orphan)
+└── live/
+    ├── bot.py                  # execution + safety layer, loop 60s
+    ├── config.py               # opus-only
+    ├── strategy_adapter.py     # delegate sang strat.analyze_live + get_btc_context
+    ├── binance_client.py
+    ├── exchange_filters.py
+    ├── state_db.py
+    ├── telegram.py             # opus channel + BOT_ACCOUNT override
+    ├── cleanup.py
+    ├── test_*.py               # mock + real-API tests (mặc định BOT_STRATEGY=opus)
+    └── __init__.py
+check_bots_status.py            # status + PnL qua VPS API
+DEPLOYMENT_STATUS.md            # trạng thái deploy
+AGENTS.md                       # rules + lệnh
 ```
 
-## Quản lý VPS (SSH)
-
-```bash
-# SSH vào VPS
-ssh root@74.113.235.40
-# Password: trong password manager (KHÔNG lưu trong file này)
-
-# Status 3 bot
-systemctl status trading-bot-lv4 trading-bot-lv5 trading-bot-lv6
-
-# Restart
-systemctl restart trading-bot-lv4 trading-bot-lv5 trading-bot-lv6
-
-# Log realtime
-tail -f /opt/trading/production/live/bot_testnet_lv4.log
-
-# Update code từ git
-cd /opt/trading && git pull origin main
-systemctl restart trading-bot-lv4 trading-bot-lv5 trading-bot-lv6
-
-# RAM
-free -h
-ps aux | grep live.bot
-```
-
-## Cách chạy 3 bot trên laptop (nếu cần fallback)
-
+## Lệnh thường dùng
 ```powershell
+# Mock test (local, không cần key)
 cd D:\Tam\trading\production
-$env:BOT_MODE="testnet"; $env:BOT_STRATEGY="lv4"; $env:PYTHONIOENCODING="utf-8"; python -u -m live.bot
-# (mở 2 shell nữa cho lv5, lv6)
+$env:BOT_MODE="dry"; $env:BOT_STRATEGY="opus"
+python -m live.test_recovery          # 17/17
+python -m live.test_decision_bars     # 6/6
+python -m live.test_sl_move           # 6/6
+python -m live.test_realized_pnl      # 5/5
+
+# Replay opus (cần data; dùng cache _cache_opus, fetch nếu thiếu)
+python test_opus_replay.py [START_DAYS_AGO] [WINDOW_DAYS]
+python test_opus_regimes.py           # sweep nhiều regime (max 2 worker)
+
+# Status bot + PnL
+python check_bots_status.py
 ```
-
-## Cách cleanup (close all + cancel all)
-
 ```bash
-# Trên VPS
+# VPS
 ssh root@74.113.235.40
-cd /opt/trading/production
-BOT_MODE=testnet BOT_STRATEGY=lv4 /opt/trading/venv/bin/python -m live.cleanup
-BOT_MODE=testnet BOT_STRATEGY=lv5 /opt/trading/venv/bin/python -m live.cleanup
-BOT_MODE=testnet BOT_STRATEGY=lv6 /opt/trading/venv/bin/python -m live.cleanup
+systemctl status trading-bot-opus-v4
+systemctl restart trading-bot-opus-v4
+cd /opt/trading && git pull origin main && systemctl restart trading-bot-opus-v4
+tail -f /opt/trading/production/live/bot_testnet_opus.log
 ```
 
-## Những việc ĐÃ XONG (15/15)
+## Lưu ý quan trọng / gotchas
+1. **`config.py` chỉ chấp nhận `opus`**. Đặt `BOT_STRATEGY=v6_3m`/`v7_1m`/... sẽ raise. Nếu cần chạy strategy khác → phải viết lại + thêm vào validation/module map.
+2. **Vị thế lv5/lv6**: user tự đóng + reset. Bot v5/v6 đã tắt, SL/TP trên sàn vẫn còn. **Đừng khởi động lại v5/v6** (file strategy đã xóa, sẽ crash).
+3. **Cache**: `_cache_opus/` (32 pkl) là data replay opus — giữ dùng lại. `_cache_months/` (65 pkl + 23 json) là **data cũ cho v6/v7 đã orphan** (multi_month_test đã xóa); giữ tạm để tránh fetch lại, nhưng không còn script nào đọc nó cả.
+4. **Opus manage trên 1m (60s loop)**, entry scan mỗi 3 loop (3 phút) — khác hẳn flow 15m cũ. Bot._update_stops có nhánh `compute_trail_sl` (opus) + nhánh legacy (chỉ chạy nếu strategy không có `compute_trail_sl`).
+5. **Testnet liquidity**: opus dùng `UNIVERSE` 30 coin cố định (bot.scan_entries ưu tiên `sa.strat.UNIVERSE`) để tránh SL fill tệ trên coin exotic testnet — đây là fix quan trọng sau lần deploy opus đầu tiên thua.
+6. **IP ban Binance**: đừng chạy nhiều instance `test_opus_replay`/`test_opus_regimes` song song (>2 worker) → -1003. `fetch_klines_range` đã có retry + ban_until.
+7. **Trial VPS hết hạn ~2026-07-24** (30 ngày từ 2026-06-24).
+8. **Telegram**: `verify=False` trên testnet, `verify=True` trên live.
 
-1. ✅ Recovery test 17/17 PASS (6 scenario: crash, orphan, stale, rác, disconnect)
-2. ✅ 3 testnet API key riêng trong `.env` (mỗi strategy 1 account)
-3. ✅ Verify 3 account kết nối ($5000 mỗi acc)
-4. ✅ Telegram async (queue + worker, không block trading loop)
-5. ✅ Noti chi tiết: entry/exit/SL-move/halt/startup/shutdown/error
-6. ✅ Algo Order API migration (Binance breaking change Dec 9, 2025)
-7. ✅ Test Algo Order PASS (SL/TP đặt + hiển thị + cleanup)
-8. ✅ Fix `-4046` retry (margin type already set → permanent, không retry)
-9. ✅ Fix margin auto-scale (bot check avail >= margin/pos, $100 cũng chạy được)
-10. ✅ 3 bot chạy song song testnet verified (overnight 8.6 giờ ổn định)
-11. ✅ Fix SL atomic swap (place new SL BEFORE cancel old, validate price side)
-12. ✅ Fix Telegram SSL (verify=False + log warning, entry noti gửi OK)
-13. ✅ Funding rate filter (skip SHORT+funding âm, LONG+funding dương >= 0.1%)
-14. ✅ Data verification 40/40 PASS (API data khớp script 100%)
-15. ✅ Deploy 3 bot lên VPS Kamatera 24/7 (systemd, auto-restart)
-
-## Những việc CÒN LẠI (next steps)
-
-1. **Monitor testnet trên VPS 3-7 ngày** — xem SL/TP có hit không, PnL ra sao
-2. **Check Telegram 3 channel** — @trading_v4, @trading_v5, @trading_v6
-3. **Reminder 25 ngày sau:** quyết định tiếp tục Kamatera ($4/tháng) hay migrate Hetzner
-4. **Khi đã ổn:** switch sang live
-   - Fill `BINANCE_LIVE_KEY_LV4` / `_LV5` / `_LV6` + secrets trong `.env` trên VPS
-   - Đổi `BOT_MODE=live` trong `.env` trên VPS
-   - `systemctl restart trading-bot-lv4 trading-bot-lv5 trading-bot-lv6`
-   - **BẮT BUỘC:** nạp tiền thật vào 3 account Binance, bắt đầu nhỏ ($100-500/account)
-5. **Monitor live sát:** ngày đầu check mỗi vài giờ, có lỗi → cleanup + dừng
-6. **Backup state:** setup cron đẩy state DB lên GitHub mỗi 6 tiếng (chưa làm)
-
-## Lưu ý QUAN TRỌNG
-
-### Binance Algo Order API (breaking change)
-- Từ Dec 9, 2025: STOP_MARKET / TAKE_PROFIT_MARKET **phải** dùng `/fapi/v1/algoOrder`
-- Endpoint cũ `/fapi/v1/order` trả error `-4120`
-- `binance_client.py` đã migrate: `new_stop_market()`, `new_take_profit_market()`, `open_algo_orders()`, `cancel_algo_order()`
-- Algo orders có `algoId` (không phải `orderId`), cancel bằng `algoId`
-- `open_algo_orders` trả thêm `triggerPrice`, `side`, `workingType`, `closePosition`
-
-### SL atomic swap (fix quan trọng)
-- **OLD (bug):** cancel old SL → place new SL. Nếu new SL fail → position không protection!
-- **NEW (fix):** place new SL → nếu OK → cancel old SL. Nếu new fail → old SL vẫn còn.
-- Price validation: check `new_sl > cur_mp` (SHORT) hoặc `new_sl < cur_mp` (LONG) trước khi move
-- Nếu invalid → skip, giữ SL cũ
-
-### Telegram fix
-- `_session.verify = False` (match binance_client) — SSL error trước đây bị silent
-- Log error ở warning level (trước đây debug level, không hiện)
-- Log success: `"Telegram delivered to @trading_v4 (307 chars)"`
-
-### Funding rate filter
-- `funding_rate()` method trong binance_client (từ `premiumIndex.lastFundingRate`)
-- SHORT + funding <= -0.1% → skip (shorts pay longs)
-- LONG + funding >= +0.1% → skip (longs pay shorts)
-- Threshold: 0.001 (API format)
-
-### Margin auto-scale
-- `POSITION_PCT × MAX_CONCURRENT` = 270%-550% equity → KHÔNG thể mở đủ slots
-- Bot check `avail >= margin_per_pos` trước mỗi entry, dừng khi hết margin
-- **$100 cũng chạy được** — chỉ mở ít lệnh hơn (1-2 thay vì 6)
-
-### Error codes đã xử lý (PERMANENT_CODES)
-- `-4046` margin type already set → permanent
-- `-4045` leverage not changed → permanent
-- `-4120` must use Algo Order API → permanent
-- `-2019` margin insufficient → permanent
-- `-4005` qty greater than max → permanent
-- `-4130` open stop/TP already exists → permanent
-- `-4028` leverage not valid for symbol → permanent (skip nhanh)
-- `-2027` exceeded max position at leverage → permanent
-- `-1021` timestamp error → resync + retry
-- 429/418 rate limit → sleep Retry-After
-
-### Backtest reality check
-- Continuous compounding (Jan2024–Jun2026) cho kết quả "dream-like" (LV6 +7000%/năm)
-- 31 monthly backtest riêng cho thấy thực tế: worst month -61%, 23-35 LIQ
-- **Monthly backtest là con số thực tế hơn** — continuous che giấu rủi ro
-
-### File `.env` (KHÔNG commit, đã trong .gitignore)
-```
-BOT_MODE=testnet
-BOT_STRATEGY=lv1  # override bằng env var khi chạy
-BINANCE_TESTNET_KEY_LV4=...
-BINANCE_TESTNET_SECRET_LV4=...
-BINANCE_TESTNET_KEY_LV5=...
-BINANCE_TESTNET_SECRET_LV5=...
-BINANCE_TESTNET_KEY_LV6=...
-BINANCE_TESTNET_SECRET_LV6=...
-TELEGRAM_BOT_TOKEN=...
-TELEGRAM_CHAT_LV4=@trading_v4
-TELEGRAM_CHAT_LV5=@trading_v5
-TELEGRAM_CHAT_LV6=@trading_v6
-```
-
-### VPS Kamatera
-- IP: 74.113.235.40 (Singapore)
-- Trial 30 ngày từ 2026-06-24 → hết hạn ~2026-07-24
-- Sau trial: ~$4/tháng (Type A, 1 vCPU, 1GB RAM, 20GB NVMe)
-- Root password: lưu trong password manager (KHÔNG commit vào repo)
-- Repo clone tại `/opt/trading`
-- venv tại `/opt/trading/venv`
-- Log tại `/opt/trading/production/live/bot_testnet_lv{4,5,6}.log`
-
-## Tech stack
-- Python 3.14 (VPS) / 3.12 (laptop)
-- `requests` (REST API, không dùng websocket)
-- `pandas` (indicators)
-- SQLite (state persistence, `state_{mode}_{strategy}.db`)
-- Telegram Bot API (HTTP, không cần library)
-- paramiko (SSH scripts quản lý VPS từ laptop)
+## Open / việc còn lại
+- User đang tự đóng vị thế lv5/lv6 + reset tiền → khi xong, 2 account đó trống.
+- opus-v4 chạy testnet lv4, ~4982 equity (lúc 13:37 ICT), 1 vị thế SOLUSDT. Theo dõi WR/PF sau vài ngày.
+- Chưa lên live (mainnet). Khi lên: `nano .env` → `BOT_MODE=live` + live keys → `systemctl restart trading-bot-opus-v4` → monitor sát ngày đầu.
 
 ## Git
-- Remote: `origin` (GitHub: ngominhtam1998/Trading)
-- Branch: `main`
-- `.env` + `state_*.db` + `bot_*.log` đã trong `.gitignore`
+- Remote: `origin` (github.com/ngominhtam1998/Trading), branch `main`.
+- 2 commit session này: `80ef3ef`, `33f9a84` (đã push).
+- Rule: **KHÔNG tự push** trừ khi user nói rõ. Commit local OK.
