@@ -80,13 +80,30 @@ def get_htf_trend(client, symbol):
         return None
 
 
-def analyze_symbol(client, symbol, btc_regime):
+def get_btc_context(client, btc_regime):
+    """Return the strategy's rich BTC short-term context, or None if the
+    strategy doesn't define one (legacy strategies)."""
+    if hasattr(strat, "get_btc_context_live"):
+        try:
+            return strat.get_btc_context_live(client)
+        except Exception as e:
+            log.warning(f"BTC context fetch failed: {e}")
+            return None
+    return None
+
+
+def analyze_symbol(client, symbol, btc_regime, btc_ctx=None):
     """Return decision dict {dir, lev, sl, tp, score, neutral} or None.
-    Mirrors backtest: signal bar = last closed 15m bar; window = 50 bars to it.
-    Also applies funding rate filter:
-      - SHORT + funding <= -0.1% → skip (shorts pay longs when funding negative)
-      - LONG  + funding >= +0.1% → skip (longs pay shorts when funding positive)
+
+    If the active strategy exposes analyze_live (multi-timeframe, e.g. opus),
+    delegate to it. Otherwise fall back to the legacy single-15m-bar path.
     """
+    if hasattr(strat, "analyze_live"):
+        try:
+            return strat.analyze_live(client, symbol, btc_regime, btc_ctx)
+        except Exception as e:
+            log.warning(f"analyze_live {symbol} failed: {e}")
+            return None
     try:
         raw = client.klines(symbol, config.BAR_INTERVAL, limit=config.KLINES_LOOKBACK)
         df = klines_to_df(raw, drop_forming=True)

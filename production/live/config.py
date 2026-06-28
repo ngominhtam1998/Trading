@@ -49,12 +49,16 @@ MODE = os.environ.get("BOT_MODE", "testnet")  # testnet | dry | live
 # Two strategies: v6_3m (3m monitoring) and v6_1m (1m monitoring)
 # v6_3m deployed on lv4 account, v6_1m deployed on lv5 account
 STRATEGY_LEVEL = os.environ.get("BOT_STRATEGY", "v7_1m").lower()
-if STRATEGY_LEVEL not in ("v7_1m", "v6_1m", "v6_1m_plus"):
-    raise ValueError(f"Invalid BOT_STRATEGY='{STRATEGY_LEVEL}'. Must be v7_1m|v6_1m|v6_1m_plus")
+if STRATEGY_LEVEL not in ("opus", "v7_1m", "v7_1m_be02", "v8_1m", "v6_1m", "v6_1m_plus"):
+    raise ValueError(f"Invalid BOT_STRATEGY='{STRATEGY_LEVEL}'. "
+                     f"Must be opus|v7_1m|v7_1m_be02|v8_1m|v6_1m|v6_1m_plus")
 
 # Map strategy level -> module name
 STRATEGY_MODULE = {
+    "opus": "strategy_opus",           # multi-timeframe, BTC-aware, 1m-managed scalper
     "v7_1m": "strategy_v7_1m",         # 1m aggressive, BE0.1, avg +2127%, WR 91%
+    "v7_1m_be02": "strategy_v7_1m_be02",  # BE0.2 + POS40, avg +2035%, WR 88%
+    "v8_1m": "strategy_v8_1m",         # high-frequency scalp, BE0.1, RR=2, POS=7.5%
     "v6_1m": "strategy_v6_1m",         # 1m monitoring, avg +660%, WR 73%
     "v6_1m_plus": "strategy_v6_1m_plus",  # 1m aggressive, avg +881%, WR 71%
 }[STRATEGY_LEVEL]
@@ -86,8 +90,17 @@ def get_api_keys():
     """Return (key, secret). For testnet/live, prefer a per-strategy key
     (e.g. BINANCE_TESTNET_KEY_LV4) so each bot runs on its OWN account.
     v7_1m uses lv4's account, v6_1m uses lv5's, v6_1m_plus uses lv6's."""
-    if STRATEGY_LEVEL == "v7_1m":
+    account = os.environ.get("BOT_ACCOUNT", "")
+    if account:
+        suffix = account.upper()
+    elif STRATEGY_LEVEL == "opus":
+        suffix = "LV4"  # opus replaces v8 on the LV4 account
+    elif STRATEGY_LEVEL == "v7_1m":
         suffix = "LV4"
+    elif STRATEGY_LEVEL == "v7_1m_be02":
+        suffix = "LV6"
+    elif STRATEGY_LEVEL == "v8_1m":
+        suffix = "LV4"  # default to LV4, override with BOT_ACCOUNT
     elif STRATEGY_LEVEL == "v6_1m":
         suffix = "LV5"
     else:  # v6_1m_plus
@@ -145,8 +158,17 @@ QUOTE_ASSET = "USDT"
 BAR_INTERVAL = "15m"
 HTF_INTERVAL = "1h"
 BAR_SECONDS = 15 * 60
-DECISION_EVERY_BARS = 4  # scan every 4 x 15m = 1h
+DECISION_EVERY_BARS = getattr(_strat_mod, "DECISION_EVERY_BARS", 4)  # default 1h; strategy may override
 MAX_HOLD_BARS = getattr(_strat_mod, "MAX_HOLD_BARS", 72)
+
+# === LIVE LOOP CADENCE ===
+# LOOP_SECONDS: how often the main loop wakes to MANAGE positions (BE/trail/SL).
+#   Legacy strategies leave it at BAR_SECONDS (15m). opus sets it to 60s so that
+#   breakeven/trailing actually track price instead of lagging 15 minutes.
+# ENTRY_EVERY_LOOPS: if set, scan for new entries every N loops (decouples entry
+#   cadence from management cadence). When None, fall back to the 15m-bar logic.
+LOOP_SECONDS = int(getattr(_strat_mod, "LOOP_SECONDS", BAR_SECONDS))
+ENTRY_EVERY_LOOPS = getattr(_strat_mod, "ENTRY_EVERY_LOOPS", None)
 KLINES_LOOKBACK = 260        # bars to fetch for indicators (EMA200 needs >200)
 
 # === RECOVERY / ORPHAN HANDLING ===

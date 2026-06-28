@@ -18,6 +18,7 @@ Mode is chosen via BOT_MODE env var (testnet|dry|live), default testnet.
 """
 import time
 import logging
+import os
 import signal
 from datetime import datetime, timezone
 
@@ -62,9 +63,10 @@ class Bot:
         self._last_time_sync = time.time()
 
     def _acquire_instance_lock(self):
-        """Prevent two bot processes with the same strategy level from running.
+        """Prevent two bot processes with the same account from running.
         Uses a file lock on Linux; falls back gracefully on Windows (dev only)."""
-        lock_path = f"/tmp/scbot_lock_{config.MODE}_{config.STRATEGY_LEVEL}.lock"
+        account = os.environ.get("BOT_ACCOUNT", config.STRATEGY_LEVEL)
+        lock_path = f"/tmp/scbot_lock_{config.MODE}_{account}.lock"
         try:
             import fcntl
             self._lock_fd = open(lock_path, "w")
@@ -576,34 +578,57 @@ class Bot:
                 self.db.set_kv("liq_warned", liq_warned)
             return
 
-        # use last closed 15m bar high/low for favorable excursion (matches backtest)
-        raw = self.client.klines(symbol, config.BAR_INTERVAL, limit=3)
-        df = sa.klines_to_df(raw, drop_forming=True)
-        if df is None or len(df) == 0:
-            return
-        bar = df.iloc[-1]
         entry = dbp["entry_price"]
         orig_sl = dbp["orig_sl_pct"]
         direction = dbp["direction"]
         be_moved = bool(dbp["be_moved"])
         trail_moved = bool(dbp["trail_moved"])
 
-        if direction == "LONG":
-            profit_pct = (bar["high"] - entry) / entry * 100
-            new_sl = None
-            if profit_pct >= config.TRAIL_R_MULTIPLE * orig_sl and not trail_moved:
-                new_sl = entry * (1 + orig_sl / 100); trail_moved = True; be_moved = True
-            elif profit_pct >= config.BE_R_MULTIPLE * orig_sl and not be_moved:
-                new_sl = entry * (1 + 0.01)
-                be_moved = True
+        if hasattr(sa.strat, "compute_trail_sl"):
+            # opus-style: manage BE/ATR-trail on 1m CLOSE using bars since entry.
+            entry_time = dbp.get("entry_time") or 0
+            bars_since = int((time.time() * 1000 - entry_time) / 60000) + 30 if entry_time else 120
+            limit = max(30, min(1000, bars_since))
+            raw = self.client.klines(symbol, "1m", limit=limit)
+            df = sa.klines_to_df(raw, drop_forming=True)
+            if df is None or len(df) == 0:
+                return
+            df = sa.strat.add_indicators(df)
+            new_sl, be_moved, trail_moved = sa.strat.compute_trail_sl(
+                direction, entry, orig_sl, be_moved, trail_moved, df)
+            # Only move if the new SL is strictly MORE favorable than the current
+            # one (avoids cancel/replace churn every minute once trailing).
+            if new_sl is not None:
+                cur_sl = dbp.get("sl_price")
+                eps = entry * 0.0002
+                if cur_sl:
+                    if direction == "LONG" and new_sl <= cur_sl + eps:
+                        new_sl = None
+                    elif direction == "SHORT" and new_sl >= cur_sl - eps:
+                        new_sl = None
         else:
-            profit_pct = (entry - bar["low"]) / entry * 100
-            new_sl = None
-            if profit_pct >= config.TRAIL_R_MULTIPLE * orig_sl and not trail_moved:
-                new_sl = entry * (1 - orig_sl / 100); trail_moved = True; be_moved = True
-            elif profit_pct >= config.BE_R_MULTIPLE * orig_sl and not be_moved:
-                new_sl = entry * (1 - 0.01)
-                be_moved = True
+            # legacy: last closed 15m bar high/low for favorable excursion
+            raw = self.client.klines(symbol, config.BAR_INTERVAL, limit=3)
+            df = sa.klines_to_df(raw, drop_forming=True)
+            if df is None or len(df) == 0:
+                return
+            bar = df.iloc[-1]
+            if direction == "LONG":
+                profit_pct = (bar["high"] - entry) / entry * 100
+                new_sl = None
+                if profit_pct >= config.TRAIL_R_MULTIPLE * orig_sl and not trail_moved:
+                    new_sl = entry * (1 + orig_sl / 100); trail_moved = True; be_moved = True
+                elif profit_pct >= config.BE_R_MULTIPLE * orig_sl and not be_moved:
+                    new_sl = entry * (1 + 0.01)
+                    be_moved = True
+            else:
+                profit_pct = (entry - bar["low"]) / entry * 100
+                new_sl = None
+                if profit_pct >= config.TRAIL_R_MULTIPLE * orig_sl and not trail_moved:
+                    new_sl = entry * (1 - orig_sl / 100); trail_moved = True; be_moved = True
+                elif profit_pct >= config.BE_R_MULTIPLE * orig_sl and not be_moved:
+                    new_sl = entry * (1 - 0.01)
+                    be_moved = True
 
         if new_sl is not None:
             new_sl = self.filters.round_price(symbol, new_sl)
@@ -680,16 +705,24 @@ class Bot:
         # Reserve a small buffer for fees + maintenance margin on existing positions
         avail_budget = avail * 0.95
 
-        # universe = top volume USDT perps
-        try:
-            tickers = self.client.ticker_24h()
-        except BinanceError as e:
-            log.warning(f"ticker fetch failed: {e}")
-            return
-        universe = [t["symbol"] for t in sorted(
-            (t for t in tickers if t["symbol"].endswith("USDT") and self.filters.has(t["symbol"])),
-            key=lambda t: float(t.get("quoteVolume", 0)), reverse=True
-        )[:config.COINS_UNIVERSE_SIZE]]
+        # universe: a strategy may pin a curated liquid list (opus) to avoid the
+        # illiquid testnet coins that wreck SL fills; otherwise top-volume perps.
+        strat_universe = getattr(sa.strat, "UNIVERSE", None)
+        if strat_universe:
+            universe = [s for s in strat_universe if self.filters.has(s)]
+        else:
+            try:
+                tickers = self.client.ticker_24h()
+            except BinanceError as e:
+                log.warning(f"ticker fetch failed: {e}")
+                return
+            universe = [t["symbol"] for t in sorted(
+                (t for t in tickers if t["symbol"].endswith("USDT") and self.filters.has(t["symbol"])),
+                key=lambda t: float(t.get("quoteVolume", 0)), reverse=True
+            )[:config.COINS_UNIVERSE_SIZE]]
+
+        # Rich BTC short-term context (computed once per scan; None for legacy strategies)
+        btc_ctx = sa.get_btc_context(self.client, self.btc_regime)
 
         opportunities = []
         for symbol in universe:
@@ -698,7 +731,7 @@ class Bot:
             if self._is_in_cooldown(symbol):
                 log.info(f"{symbol}: in cooldown, skip entry")
                 continue
-            opp = sa.analyze_symbol(self.client, symbol, self.btc_regime)
+            opp = sa.analyze_symbol(self.client, symbol, self.btc_regime, btc_ctx)
             if opp:
                 opportunities.append({"symbol": symbol, **opp})
             if not RUNNING:
@@ -726,6 +759,7 @@ class Bot:
         listen_key_ts = 0
         while RUNNING:
             cycle_start = time.time()
+            self._loop_count = getattr(self, "_loop_count", 0) + 1
             try:
                 self._sync_time_if_needed()
                 self.btc_regime = sa.get_btc_regime_live(self.client)
@@ -755,12 +789,10 @@ class Bot:
                         tg.notify_daily_halt(equity, state.get("start_equity", equity))
                         state["halt_notified"] = True
                         self.db.set_kv("daily", state)
-                elif self._is_decision_bar():
+                elif self._should_scan_entries():
                     self.scan_entries(ex_positions, equity, avail)
                 else:
-                    bars_left = config.DECISION_EVERY_BARS - (self._bar_index() - self.last_decision_bar)
-                    log.info(f"Non-decision bar; skip entry scan, manage only "
-                             f"(next scan in ~{max(0, bars_left)} bars)")
+                    log.info("Non-decision cycle; skip entry scan, manage only")
 
                 # listenKey keepalive every 30 min (kept for future WS use)
                 if time.time() - listen_key_ts > 1800:
@@ -786,6 +818,17 @@ class Bot:
         """Current bar index (0-based) based on BAR_SECONDS."""
         return int(time.time() // config.BAR_SECONDS)
 
+    def _should_scan_entries(self):
+        """True if we should scan entries this cycle.
+
+        Two modes:
+        - ENTRY_EVERY_LOOPS set (opus): scan every N management loops.
+        - else (legacy): scan on the 15m-bar DECISION_EVERY_BARS schedule.
+        """
+        if config.ENTRY_EVERY_LOOPS:
+            return (self._loop_count - 1) % int(config.ENTRY_EVERY_LOOPS) == 0
+        return self._is_decision_bar()
+
     def _is_decision_bar(self):
         """True if we should scan entries this bar (matches backtest DECISION_EVERY)."""
         if self.last_decision_bar is None:
@@ -799,7 +842,7 @@ class Bot:
 
     def _sleep_to_next_bar(self):
         now = time.time()
-        period = config.BAR_SECONDS
+        period = config.LOOP_SECONDS
         next_close = (int(now // period) + 1) * period + 5  # +5s buffer for bar finalization
         wait = max(5, next_close - now)
         end = now + wait
