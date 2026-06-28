@@ -46,15 +46,16 @@ _load_dotenv()
 MODE = os.environ.get("BOT_MODE", "testnet")  # testnet | dry | live
 
 # === STRATEGY LEVEL ===
-# Only opus is supported. Legacy v6/v7/v8 strategies have been retired
+# Supported: opus (lv4), glm (lv5). Legacy v6/v7/v8 strategies have been retired
 # (they lost money on testnet despite profitable backtests).
 STRATEGY_LEVEL = os.environ.get("BOT_STRATEGY", "opus").lower()
-if STRATEGY_LEVEL != "opus":
-    raise ValueError(f"Invalid BOT_STRATEGY='{STRATEGY_LEVEL}'. Only 'opus' is supported.")
+if STRATEGY_LEVEL not in ("opus", "glm"):
+    raise ValueError(f"Invalid BOT_STRATEGY='{STRATEGY_LEVEL}'. Supported: 'opus', 'glm'.")
 
 # Map strategy level -> module name
 STRATEGY_MODULE = {
     "opus": "strategy_opus",          # multi-timeframe, BTC-aware, 1m-managed scalper
+    "glm":  "strategy_glm",           # opus variant: pullback entry + dynamic universe
 }[STRATEGY_LEVEL]
 
 # === ENDPOINTS ===

@@ -26,6 +26,17 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 log = logging.getLogger("telegram")
 
+# Vietnam timezone offset (UTC+7) — VPS runs UTC+0, all reports use VN time
+_VN_OFFSET = 7 * 3600
+
+
+def _vn_strftime(fmt, ts=None):
+    """Format time in Asia/Ho_Chi_Minh (UTC+7) regardless of system TZ."""
+    if ts is None:
+        ts = time.time()
+    return time.strftime(fmt, time.gmtime(ts + _VN_OFFSET))
+
+
 # Lazy-loaded config
 _BOT_TOKEN = None
 _CHAT_IDS = {}
@@ -50,6 +61,7 @@ def _load_config():
     _BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     _CHAT_IDS = {
         "opus": os.environ.get("TELEGRAM_CHAT_LV4", ""),       # @trading_v4 (lv4 account)
+        "glm":  os.environ.get("TELEGRAM_CHAT_LV5", ""),       # @trading_v5 (lv5 account)
     }
     # Override by BOT_ACCOUNT if set (allows same strategy on different channels/accounts)
     account = os.environ.get("BOT_ACCOUNT", "")
@@ -167,8 +179,8 @@ def notify_entry(symbol, direction, qty, price, lev, sl_pct, tp_pct, score,
     """Full entry notification: coin, direction, qty, price, leverage, margin,
     notional (volume), SL/TP price+%, score, time."""
     emoji = "🟢" if direction == "LONG" else "🔴"
-    when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(
-        (entry_time / 1000) if entry_time else time.time()))
+    when = _vn_strftime("%Y-%m-%d %H:%M:%S",
+        (entry_time / 1000) if entry_time else None)
     rr = (tp_pct / sl_pct) if sl_pct else 0
     lines = [
         f"{emoji} <b>MỞ LỆNH</b> — {symbol}",
@@ -215,7 +227,7 @@ def notify_exit(symbol, direction, reason, pnl=None, pnl_pct=None,
     if hold_seconds is not None:
         h = int(hold_seconds // 3600); m = int((hold_seconds % 3600) // 60)
         lines.append(f"├ Giữ lệnh: <b>{h}h {m}m</b>")
-    when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    when = _vn_strftime("%Y-%m-%d %H:%M:%S")
     lines.append(f"└ Thời gian: {when}")
     return send("\n".join(lines))
 
@@ -233,7 +245,7 @@ def notify_orphan_adopted(symbol, direction, qty, entry, lev, sl_price, tp_price
     """Notification when bot adopts an orphan position (found on exchange, not in DB).
     Happens when bot restarts with fresh DB or after crash."""
     emoji = "🟢" if direction == "LONG" else "🔴"
-    when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    when = _vn_strftime("%Y-%m-%d %H:%M:%S")
     notional = qty * entry
     tp_pct = sl_pct * 3.5
     msg = (f"{emoji} <b>ADOPT ORPHAN</b> — {symbol}\n"
@@ -263,7 +275,7 @@ def notify_daily_halt(equity, start_equity):
 
 
 def notify_startup(level, mode, equity):
-    when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    when = _vn_strftime("%Y-%m-%d %H:%M:%S")
     msg = (f"🚀 <b>BOT KHỞI ĐỘNG</b>\n"
            f"├ Chiến lược: <b>{level.upper()}</b>\n"
            f"├ Chế độ: <b>{mode}</b>\n"

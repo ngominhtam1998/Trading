@@ -20,7 +20,10 @@ import time
 import logging
 import os
 import signal
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+# Vietnam timezone (UTC+7) — daily halt/funding boundaries use VN midnight
+_VN_TZ = timezone(timedelta(hours=7))
 
 from . import config
 from .binance_client import BinanceClient, BinanceError
@@ -306,7 +309,7 @@ class Bot:
     # ---------------- daily halt ----------------
     def check_daily_halt(self, equity):
         """Returns True if new entries are halted due to daily loss limit."""
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today = datetime.now(_VN_TZ).strftime("%Y-%m-%d")
         state = self.db.get_kv("daily", {})
         if state.get("date") != today:
             state = {"date": today, "start_equity": equity}
@@ -395,7 +398,7 @@ class Bot:
             notional = dbp["qty"] * dbp["entry_price"]
             funding_cost = notional * fr * funding_intervals
             # Track daily total
-            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            today = datetime.now(_VN_TZ).strftime("%Y-%m-%d")
             funding_state = self.db.get_kv("funding_daily", {})
             if funding_state.get("date") != today:
                 funding_state = {"date": today, "total": 0.0, "warned": False}
