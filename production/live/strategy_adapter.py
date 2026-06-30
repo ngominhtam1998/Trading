@@ -48,18 +48,26 @@ def klines_to_df(raw, drop_forming=True):
 
 
 def get_btc_regime_live(client):
-    """Fetch BTC daily, compute regime (bull/bear/neutral)."""
+    """Fetch BTC 4h, compute regime (bull/bear/neutral) using EMA9/21.
+    4h is faster than daily — catches real trends within a week instead of
+    2+ weeks for daily EMAs. Matches the backtest/replay test exactly."""
     try:
-        raw = client.klines("BTCUSDT", "1d", limit=260)
+        raw = client.klines("BTCUSDT", "4h", limit=120)
         df = klines_to_df(raw, drop_forming=True)
-        if df is None or len(df) < 50:
-            log.warning("BTC daily insufficient -> neutral")
+        if df is None or len(df) < 30:
+            log.warning("BTC 4h insufficient -> neutral")
             return "neutral"
-        df["ema50"] = df["close"].ewm(span=50, adjust=False).mean()
-        df["ema200"] = df["close"].ewm(span=200, adjust=False).mean()
-        # current_time = now; get_btc_regime uses bars strictly before it
-        now = pd.Timestamp(datetime.now(timezone.utc).replace(tzinfo=None))
-        return strat.get_btc_regime(df, now)
+        df["ema9"] = df["close"].ewm(span=9, adjust=False).mean()
+        df["ema21"] = df["close"].ewm(span=21, adjust=False).mean()
+        last = df.iloc[-1]
+        if pd.isna(last["ema21"]):
+            return "neutral"
+        e9 = last["ema9"] if not pd.isna(last["ema9"]) else last["ema21"]
+        if last["close"] > e9 > last["ema21"]:
+            return "bull"
+        if last["close"] < e9 < last["ema21"]:
+            return "bear"
+        return "neutral"
     except Exception as e:
         log.warning(f"BTC regime fetch failed: {e} -> neutral")
         return "neutral"

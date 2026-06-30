@@ -427,15 +427,23 @@ class Bot:
         """Open a position for `symbol` based on decision `opp`."""
         direction = opp["dir"]
         lev = opp["lev"]
-        # v6+ score-based position sizing: use pos_pct from signal if present
-        pos_pct = opp.get("pos_pct", config.POSITION_PCT)
-        margin = equity * pos_pct / 100.0
+        sl_pct = opp.get("sl", 1.5)
+        # Risk-based sizing (strategy_final): size notional so a full SL loses
+        # exactly risk_pct% of equity. Falls back to pos_pct for legacy strategies.
+        risk_pct = opp.get("risk_pct")
+        if risk_pct and sl_pct > 0:
+            risk_dollars = equity * risk_pct / 100.0
+            notional = risk_dollars * 100.0 / sl_pct
+            margin = notional / lev
+        else:
+            pos_pct = opp.get("pos_pct", config.POSITION_PCT)
+            margin = equity * pos_pct / 100.0
+            notional = margin * lev
         try:
             price = self.client.mark_price(symbol)
         except BinanceError as e:
             log.warning(f"{symbol}: no mark price, skip entry: {e}")
             return False
-        notional = margin * lev
         qty = self.filters.round_qty(symbol, notional / price)
         ok, reason = self.filters.valid_order(symbol, qty, price)
         if not ok:
@@ -701,10 +709,19 @@ class Bot:
         if slots <= 0:
             log.info(f"No free slots ({open_count}/{max_conc}), regime={self.btc_regime}")
             return
-        # Per-position margin = equity * POSITION_PCT% (matches backtest).
-        # For v6+ score-based sizing, use max possible (POS_SCORE_HIGH) for budget check.
-        max_pos_pct = max(config.POS_SCORE_HIGH, config.POSITION_PCT)
-        margin_per_pos = equity * max_pos_pct / 100.0
+        # Per-position margin estimate for budget check.
+        # Risk-based sizing (final): max margin = risk_high * 100 / SL_MIN / lev.
+        # Legacy (opus): margin = equity * POS_SCORE_HIGH%.
+        risk_high = getattr(sa.strat, "RISK_PCT_HIGH", None)
+        sl_min = getattr(sa.strat, "SL_MIN_PCT", None)
+        max_lev = config.MAX_LEVERAGE
+        if risk_high and sl_min and sl_min > 0:
+            max_risk_dollars = equity * risk_high / 100.0
+            max_notional = max_risk_dollars * 100.0 / sl_min
+            margin_per_pos = max_notional / max_lev
+        else:
+            max_pos_pct = max(config.POS_SCORE_HIGH, config.POSITION_PCT)
+            margin_per_pos = equity * max_pos_pct / 100.0
         # Reserve a small buffer for fees + maintenance margin on existing positions
         avail_budget = avail * 0.95
 

@@ -60,8 +60,9 @@ def _load_config():
     from . import config  # noqa: F401
     _BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     _CHAT_IDS = {
-        "opus": os.environ.get("TELEGRAM_CHAT_LV4", ""),       # @trading_v4 (lv4 account)
-        "glm":  os.environ.get("TELEGRAM_CHAT_LV5", ""),       # @trading_v5 (lv5 account)
+        "opus":  os.environ.get("TELEGRAM_CHAT_LV4", ""),       # @trading_v4 (lv4 account)
+        "glm":   os.environ.get("TELEGRAM_CHAT_LV5", ""),       # @trading_v5 (lv5 account)
+        "final": os.environ.get("TELEGRAM_CHAT_LV6", ""),       # @trading_v6 (lv6 account)
     }
     # Override by BOT_ACCOUNT if set (allows same strategy on different channels/accounts)
     account = os.environ.get("BOT_ACCOUNT", "")

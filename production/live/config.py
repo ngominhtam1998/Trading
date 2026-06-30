@@ -46,16 +46,17 @@ _load_dotenv()
 MODE = os.environ.get("BOT_MODE", "testnet")  # testnet | dry | live
 
 # === STRATEGY LEVEL ===
-# Supported: opus (lv4), glm (lv5). Legacy v6/v7/v8 strategies have been retired
+# Supported: opus (lv4), glm (lv5), final (lv6). Legacy v6/v7/v8 strategies have been retired
 # (they lost money on testnet despite profitable backtests).
 STRATEGY_LEVEL = os.environ.get("BOT_STRATEGY", "opus").lower()
-if STRATEGY_LEVEL not in ("opus", "glm"):
-    raise ValueError(f"Invalid BOT_STRATEGY='{STRATEGY_LEVEL}'. Supported: 'opus', 'glm'.")
+if STRATEGY_LEVEL not in ("opus", "glm", "final"):
+    raise ValueError(f"Invalid BOT_STRATEGY='{STRATEGY_LEVEL}'. Supported: 'opus', 'glm', 'final'.")
 
 # Map strategy level -> module name
 STRATEGY_MODULE = {
-    "opus": "strategy_opus",          # multi-timeframe, BTC-aware, 1m-managed scalper
-    "glm":  "strategy_glm",           # opus variant: pullback entry + dynamic universe
+    "opus":  "strategy_opus",    # multi-timeframe, BTC-aware, 1m-managed scalper
+    "glm":   "strategy_glm",     # opus variant: pullback entry + dynamic universe
+    "final": "strategy_final",   # higher-TF trend-following, regime-gated, let-winners-run
 }[STRATEGY_LEVEL]
 
 # === ENDPOINTS ===
@@ -88,8 +89,8 @@ def get_api_keys():
     account = os.environ.get("BOT_ACCOUNT", "")
     if account:
         suffix = account.upper()
-    else:  # opus -> lv4 account
-        suffix = "LV4"
+    else:  # default account per strategy level
+        suffix = {"opus": "LV4", "glm": "LV5", "final": "LV6"}.get(STRATEGY_LEVEL, "LV4")
     if MODE == "live":
         key = os.environ.get(f"BINANCE_LIVE_KEY_{suffix}", "") or os.environ.get("BINANCE_LIVE_KEY", "")
         sec = os.environ.get(f"BINANCE_LIVE_SECRET_{suffix}", "") or os.environ.get("BINANCE_LIVE_SECRET", "")
